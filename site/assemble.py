@@ -37,7 +37,7 @@ def b64_file(path):
 
 
 print("reading template...")
-with open("site/template.html", "r") as f:
+with open("site/template.html", "r", encoding="utf-8") as f:
     html = f.read()
 
 print("encoding fonts...")
@@ -65,6 +65,6 @@ print("splicing in draco-compressed model base64...")
 html = html.replace("__MODEL_DATA_B64__", b64_file("site/full_disk_draco.glb"))
 
 print(f"final html size: {len(html)/1e6:.1f} MB")
-with open("site/downtown_macon_3d.html", "w") as f:
+with open("site/downtown_macon_3d.html", "w", encoding="utf-8") as f:
     f.write(html)
 print("wrote site/downtown_macon_3d.html")
