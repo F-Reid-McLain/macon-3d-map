@@ -1,15 +1,26 @@
-"""Build a fixed-scale grid of tiles covering a circle (center + radius,
-sized to fit within Bibb County's real boundary) so all tiles share one
-consistent scale and can be physically assembled into one composite city
-model -- unlike the earlier downtown_core/college_hill/mercer tiles, which
-were each independently auto-scaled to fill 200mm and do NOT share a scale.
+"""Build a fixed-scale grid of tiles covering the REAL Bibb County boundary
+(county_boundary/bibb_county.geojson, US Census cartographic boundary
+file) so all tiles share one consistent scale and can be physically
+assembled into one composite city model -- unlike the earlier
+downtown_core/college_hill/mercer tiles, which were each independently
+auto-scaled to fill 200mm and do NOT share a scale.
+
+Originally clipped to a circle (center + radius) inscribed inside the county
+instead of the county itself -- deliberate at the time, since a circle is
+the largest shape that guarantees every tile is print-bed-sized (see
+TILE_SIZE_M below), and downtown was the only area anyone cared about. Now
+covering the whole county, a circumscribing circle would waste ~3x the area
+in neighboring counties, so tiles are clipped to the actual county polygon
+instead -- same approach the sibling commuting-project repo's county models
+already use. TILE_SIZE_M is kept as-is even though the print-bed constraint
+that originally sized it doesn't apply to this (web, unprinted) repo -- it's
+just a convenient generation-chunk size; the final model is one concatenated
+mesh regardless of how many tiles it was built from.
 
 Each tile's own plate is shaped as (its grid square) INTERSECTED WITH (the
-circle), not a plain rectangle: tiles fully inside the circle end up as full
-squares (using most of the print bed), while tiles straddling the circle's
-edge come out as smaller partial/curved pieces -- small enough that several
-can be nested on one print bed together, matching an Elegoo Centauri Carbon's
-256x256x256mm build volume.
+county polygon), not a plain rectangle: tiles fully inside the county end up
+as full squares, while tiles straddling the county line come out as smaller
+partial/irregular pieces.
 
 The base plate follows REAL USGS elevation data (2.5x vertically exaggerated,
 confirmed against test tiles) instead of being flat -- Macon's downtown
@@ -33,9 +44,10 @@ from shapely.geometry.base import BaseMultipartGeometry
 from pyproj import Transformer
 
 # ---- config ----
-CENTER_LON, CENTER_LAT = -83.625, 32.833
-RADIUS_M = 5614.34          # fit within Bibb County's real boundary (see conversation)
-TILE_SIZE_M = 3000.0        # 3km grid spacing
+CENTER_LON, CENTER_LAT = -83.625, 32.833   # tile-grid origin only (downtown) -- doesn't
+                                            # need to be the county's own centroid, tiles
+                                            # just need to cover the plane and get clipped
+TILE_SIZE_M = 3000.0        # 3km grid spacing (generation-chunk size, see module docstring)
 MM_PER_M = 0.08             # FIXED horizontal scale for every tile: 1:12,500
 BASE_THICKNESS_MM = 1.2     # min material above the terrain's own lowest point
 MIN_BUILDING_HEIGHT_MM = 1.0
@@ -51,12 +63,17 @@ DEM_SAMPLE_SPACING_M = 20.0
 UTM_CRS = "EPSG:32617"
 OUT_DIR = "output/grid"
 BUILDINGS_PATH = "data/buildings_hybrid_zoned.geojson"
+COUNTY_BOUNDARY_PATH = "county_boundary/bibb_county.geojson"
 
 to_utm = Transformer.from_crs("EPSG:4326", UTM_CRS, always_xy=True)
 CX, CY = to_utm.transform(CENTER_LON, CENTER_LAT)
-CIRCLE = Point(CX, CY).buffer(RADIUS_M, quad_segs=128)
 
-print(f"center (utm) = ({CX:.1f}, {CY:.1f}), radius={RADIUS_M:.0f}m, tile={TILE_SIZE_M:.0f}m, "
+_county_gdf = gpd.read_file(COUNTY_BOUNDARY_PATH).to_crs(UTM_CRS)
+COUNTY_SHAPE = _county_gdf.geometry.iloc[0]
+_cminx, _cminy, _cmaxx, _cmaxy = COUNTY_SHAPE.bounds
+
+print(f"center (utm) = ({CX:.1f}, {CY:.1f}), county bounds (utm) = "
+      f"({_cminx:.0f}, {_cminy:.0f}, {_cmaxx:.0f}, {_cmaxy:.0f}), tile={TILE_SIZE_M:.0f}m, "
       f"scale=1:{1/MM_PER_M/1000:.3f}k, terrain exaggeration={TERRAIN_MM_PER_M/MM_PER_M:.2f}x")
 
 # ---- DEM: load, fill small gaps, build an interpolator in UTM meters ----
@@ -89,14 +106,15 @@ def terrain_z_mm(x, y):
     return BASE_THICKNESS_MM + (elevation_at(x, y) - ELEV_MIN) * TERRAIN_MM_PER_M
 
 
-# ---- build the tile grid: keep squares whose intersection with the circle is non-trivial ----
-n = int(np.ceil(RADIUS_M / TILE_SIZE_M)) + 1
+# ---- build the tile grid: keep squares whose intersection with the county is non-trivial ----
+n_i = int(np.ceil(max(CX - _cminx, _cmaxx - CX) / TILE_SIZE_M)) + 1
+n_j = int(np.ceil(max(CY - _cminy, _cmaxy - CY) / TILE_SIZE_M)) + 1
 tiles = []
-for i in range(-n, n + 1):
-    for j in range(-n, n + 1):
+for i in range(-n_i, n_i + 1):
+    for j in range(-n_j, n_j + 1):
         tx, ty = CX + i * TILE_SIZE_M, CY + j * TILE_SIZE_M
         square = box(tx - TILE_SIZE_M / 2, ty - TILE_SIZE_M / 2, tx + TILE_SIZE_M / 2, ty + TILE_SIZE_M / 2)
-        clipped = square.intersection(CIRCLE)
+        clipped = square.intersection(COUNTY_SHAPE)
         if clipped.is_empty or clipped.area < MIN_TILE_CONTENT_M2:
             continue
         name = f"tile_{i:+03d}_{j:+03d}".replace("+", "p").replace("-", "m")

@@ -1,17 +1,25 @@
-"""Fetch OSM buildings, roads, and water for the downtown Macon model extent.
+"""Fetch OSM buildings, roads, and water for the Macon model extent.
 
-Extent: historic downtown Macon core, the College Hill Corridor, and the
-Mercer University campus (the "wider" extent option). Run from the project
-root: `python3 scripts/fetch_osm.py`
+Extent: all of Bibb County (county_boundary/bibb_county.geojson), not
+just the downtown core -- widened from the original downtown-only extent
+(historic core + College Hill Corridor + Mercer University) when the model
+grew to cover the whole county. Run from the project root:
+`python3 scripts/fetch_osm.py`
 """
 import json
 import time
 import urllib.parse
 import urllib.request
 
-# south, west, north, east (lat/lon) -- covers the full 5.6km-radius circle
-# (center -83.625,32.833) used for the fixed-scale tile grid, plus margin
-BBOX = (32.7797, -83.6882, 32.8863, -83.5618)
+import geopandas as gpd
+
+# south, west, north, east (lat/lon) -- Bibb County's real bounds + 3% margin,
+# read from the same boundary file build_grid.py clips tiles to, not
+# hardcoded, so the two can't quietly drift apart
+_county = gpd.read_file("county_boundary/bibb_county.geojson").to_crs("EPSG:4326")
+_minx, _miny, _maxx, _maxy = _county.total_bounds
+_padx, _pady = (_maxx - _minx) * 0.03, (_maxy - _miny) * 0.03
+BBOX = (_miny - _pady, _minx - _padx, _maxy + _pady, _maxx + _padx)
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
