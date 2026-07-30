@@ -390,7 +390,8 @@
     "three": "data:text/javascript;base64,__THREE_MODULE_B64__",
     "three/addons/utils/BufferGeometryUtils.js": "data:text/javascript;base64,__BUFFER_GEOMETRY_UTILS_B64__",
     "three/addons/loaders/GLTFLoader.js": "data:text/javascript;base64,__GLTF_LOADER_B64__",
-    "three/addons/loaders/DRACOLoader.js": "data:text/javascript;base64,__DRACO_LOADER_B64__"
+    "three/addons/loaders/DRACOLoader.js": "data:text/javascript;base64,__DRACO_LOADER_B64__",
+    "three-mesh-bvh": "data:text/javascript;base64,__THREE_MESH_BVH_B64__"
   }
 }
 </script>
@@ -451,6 +452,15 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-mesh-bvh";
+
+// A brute-force raycast against this disk's ~1.6M faces measured at ~70ms --
+// far too slow to run every frame for collision. three-mesh-bvh patches in a
+// BVH-accelerated raycast (O(log n) instead of O(n)), bringing per-frame
+// collision raycasts down to a small fraction of a millisecond.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 const LANDMARKS = __LANDMARKS_JSON__;
 
@@ -507,7 +517,7 @@ scene.background = new THREE.Color(0x12181a); // matches --ink
 // before without any equivalent issue.
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 5000);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -585,7 +595,19 @@ let hotspotEls = null;
 gltfLoader.parse(modelBuffer, "", (gltf) => {
   log("glTF parsed OK -- scene ready");
   gltf.scene.traverse((obj) => {
-    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+    if (obj.isMesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      // trimesh's GLB export doesn't set metallicFactor, so it defaults to
+      // the glTF spec's default of 1.0 (fully metallic) -- metals barely
+      // respond to plain directional/ambient lights without an environment
+      // map to reflect, which is exactly why everything looked dull/dark.
+      // This is a flat-colored relief map, not shiny metal -- force it to a
+      // matte, fully diffuse response so the vertex colors actually pop.
+      obj.material.metalness = 0;
+      obj.material.roughness = 0.85;
+      obj.geometry.computeBoundsTree();
+    }
   });
   modelGroup.add(gltf.scene);
   hotspotEls = buildHotspots();
@@ -704,6 +726,24 @@ renderer.domElement.addEventListener("wheel", (e) => {
 const MOVE_SPEED = 220; // mm/sec (this model's local unit), matches the ~900mm-wide disk
 const BOOST_MULTIPLIER = 3;
 
+// ---- collision: keeps the free-roam camera from clipping through the
+// terrain/buildings. A plain raycast against this disk's ~1.6M faces
+// measured at ~70ms (far too slow for every frame) -- three-mesh-bvh's
+// accelerated raycast (wired in above) brings this down to a fraction of a
+// millisecond, cheap enough to run twice per frame. ----
+const collisionRaycaster = new THREE.Raycaster();
+const MIN_CLEARANCE = 8; // mm -- closest the camera can get to any surface
+const EYE_CLEARANCE = 6; // mm -- how far above the ground/roof directly below the camera sits
+
+function clampToSurface() {
+  collisionRaycaster.set(camera.position.clone().setY(camera.position.y + 1000), new THREE.Vector3(0, -1, 0));
+  collisionRaycaster.far = 3000;
+  const hits = collisionRaycaster.intersectObject(modelGroup, true);
+  if (hits.length && camera.position.y < hits[0].point.y + EYE_CLEARANCE) {
+    camera.position.y = hits[0].point.y + EYE_CLEARANCE;
+  }
+}
+
 function updateMovement(dt) {
   let speed = MOVE_SPEED * dt;
   if (keys.has("ShiftLeft") || keys.has("ShiftRight")) speed *= BOOST_MULTIPLIER;
@@ -721,8 +761,19 @@ function updateMovement(dt) {
   if (keys.has("KeyQ")) move.y -= 1;
   if (move.lengthSq() > 0) {
     move.normalize().multiplyScalar(speed);
+    // don't walk/fly through a wall or building: raycast along the proposed
+    // move direction and clamp distance if something's in the way
+    const moveDir = move.clone().normalize();
+    collisionRaycaster.set(camera.position, moveDir);
+    collisionRaycaster.far = speed + MIN_CLEARANCE;
+    const hits = collisionRaycaster.intersectObject(modelGroup, true);
+    if (hits.length && hits[0].distance < speed + MIN_CLEARANCE) {
+      const allowed = Math.max(0, hits[0].distance - MIN_CLEARANCE);
+      move.copy(moveDir).multiplyScalar(allowed);
+    }
     camera.position.add(move);
   }
+  clampToSurface();
 }
 
 // ---- landmark fly-to + default view: both implemented as a quaternion

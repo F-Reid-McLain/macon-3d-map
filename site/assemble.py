@@ -51,6 +51,7 @@ html = html.replace("__THREE_MODULE_B64__", b64_file("site/three.module.js"))
 html = html.replace("__BUFFER_GEOMETRY_UTILS_B64__", b64_file("site/BufferGeometryUtils.js"))
 html = html.replace("__GLTF_LOADER_B64__", b64_file("site/GLTFLoader.js"))
 html = html.replace("__DRACO_LOADER_B64__", b64_file("site/DRACOLoader.js"))
+html = html.replace("__THREE_MESH_BVH_B64__", b64_file("site/three-mesh-bvh.js"))
 
 print("inlining landmarks json...")
 html = html.replace("__LANDMARKS_JSON__", json.dumps(LANDMARKS))
