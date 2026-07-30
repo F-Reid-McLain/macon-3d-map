@@ -1,0 +1,657 @@
+<title>Downtown Macon — Interactive 3D Model</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  @font-face {
+    font-family: "Public Sans";
+    font-weight: 400;
+    src: url(data:font/ttf;base64,__PUBLIC_SANS_REGULAR_B64__) format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Public Sans";
+    font-weight: 600;
+    src: url(data:font/ttf;base64,__PUBLIC_SANS_SEMIBOLD_B64__) format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Public Sans";
+    font-weight: 700;
+    src: url(data:font/ttf;base64,__PUBLIC_SANS_BOLD_B64__) format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "IBM Plex Mono";
+    font-weight: 400;
+    src: url(data:font/ttf;base64,__PLEX_MONO_B64__) format("truetype");
+    font-display: swap;
+  }
+
+  :root {
+    --ink: #12181a;
+    --ink-raised: #1b2224;
+    --paper: #ece6d9;
+    --paper-dim: #a9a396;
+    --brass: #b8934a;
+    --brass-bright: #d4ac5e;
+    --clay: #a8482e;
+    --pine: #3f6b4f;
+    --slate: #56676a;
+    --line: #2a3234;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  ::selection { background: var(--brass); color: var(--ink); }
+  button, input { font-family: inherit; }
+  :focus-visible { outline: 2px solid var(--brass-bright); outline-offset: 1px; }
+
+  .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #app {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    padding: 0.85rem 1.1rem;
+    background: linear-gradient(to bottom, rgba(18,24,26,0.92), rgba(18,24,26,0));
+    pointer-events: none;
+  }
+  #topbar h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+  #topbar .sub {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--paper-dim);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  /* ---------- side panel ---------- */
+  #panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 30;
+    height: 100vh;
+    width: 320px;
+    max-width: 86vw;
+    background: var(--ink-raised);
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(0);
+    transition: transform 0.25s ease;
+  }
+  #panel.collapsed { transform: translateX(100%); }
+  #panel-toggle {
+    position: absolute;
+    top: 0.85rem;
+    right: 320px;
+    z-index: 31;
+    background: var(--ink-raised);
+    border: 1px solid var(--line);
+    border-right: none;
+    color: var(--paper);
+    padding: 0.5rem 0.6rem;
+    cursor: pointer;
+    border-radius: var(--radius) 0 0 var(--radius);
+    font-size: 0.85rem;
+    transition: right 0.25s ease;
+  }
+  #panel.collapsed ~ #panel-toggle,
+  #panel-toggle.collapsed { right: 0; }
+
+  #panel-scroll {
+    overflow-y: auto;
+    padding: 1.1rem 1.1rem 2rem;
+    flex: 1;
+  }
+  #panel h2 {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--brass-bright);
+    margin: 1.6rem 0 0.6rem;
+    font-weight: 600;
+  }
+  #panel h2:first-child { margin-top: 0; }
+  #panel p.desc {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--paper-dim);
+    margin: 0;
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.3rem 0;
+    font-size: 0.82rem;
+  }
+  .swatch {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 2px;
+    flex: none;
+    border: 1px solid rgba(0,0,0,0.25);
+  }
+  .legend-count {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: var(--paper-dim);
+  }
+
+  .landmark-group summary {
+    cursor: pointer;
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--paper);
+    padding: 0.4rem 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .landmark-group summary::before {
+    content: "▸";
+    color: var(--brass);
+    transition: transform 0.15s ease;
+    font-size: 0.7rem;
+  }
+  .landmark-group[open] summary::before { transform: rotate(90deg); }
+  .landmark-group summary::-webkit-details-marker { display: none; }
+
+  .landmark-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-left: 2px solid transparent;
+    color: var(--paper);
+    padding: 0.4rem 0.1rem 0.4rem 0.7rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  .landmark-btn:hover, .landmark-btn:focus-visible {
+    background: rgba(184, 147, 74, 0.12);
+    border-left-color: var(--brass);
+  }
+  .landmark-btn.active {
+    background: rgba(184, 147, 74, 0.18);
+    border-left-color: var(--brass-bright);
+    color: var(--brass-bright);
+  }
+  .landmark-btn .h {
+    display: block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.65rem;
+    color: var(--paper-dim);
+    margin-top: 0.1rem;
+  }
+
+  #controls-hint {
+    font-size: 0.72rem;
+    color: var(--paper-dim);
+    border-top: 1px solid var(--line);
+    padding: 0.75rem 1.1rem;
+    line-height: 1.5;
+  }
+  #controls-hint kbd {
+    font-family: "IBM Plex Mono", monospace;
+    background: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 0.05rem 0.3rem;
+    font-size: 0.68rem;
+  }
+
+  /* ---------- viewer ---------- */
+  model-viewer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    --poster-color: transparent;
+  }
+
+  .hotspot {
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+  }
+  .hotspot .dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(18,24,26,0.85);
+    box-shadow: 0 0 0 3px rgba(236,230,217,0.15);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  .hotspot:hover .dot, .hotspot:focus-visible .dot, .hotspot.pulsing .dot {
+    box-shadow: 0 0 0 5px rgba(236,230,217,0.35);
+    transform: scale(1.15);
+  }
+  .hotspot .label {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--ink-raised);
+    border: 1px solid var(--line);
+    color: var(--paper);
+    padding: 0.3rem 0.55rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    border-radius: var(--radius);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  .hotspot:hover .label, .hotspot:focus-visible .label, .hotspot.pulsing .label {
+    opacity: 1;
+  }
+
+  /* ---------- loading overlay ---------- */
+  #loading {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    background: var(--ink);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    transition: opacity 0.4s ease;
+  }
+  #loading.hidden { opacity: 0; pointer-events: none; }
+  #loading .mark {
+    font-size: 0.85rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--brass-bright);
+  }
+  #loading .barwrap {
+    width: min(360px, 70vw);
+    height: 3px;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #loading .bar {
+    height: 100%;
+    width: 0%;
+    background: var(--brass);
+    transition: width 0.2s ease;
+  }
+  #loading .note {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    color: var(--paper-dim);
+    max-width: 340px;
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #panel, .hotspot .dot, .hotspot .label, #loading { transition: none; }
+  }
+
+  @media (max-width: 640px) {
+    #panel { width: 100vw; max-width: 100vw; }
+    #panel-toggle { right: 100vw; }
+    #panel.collapsed ~ #panel-toggle { right: 0; }
+  }
+</style>
+
+<div id="app">
+  <div id="topbar">
+    <h1>Downtown Macon, Georgia</h1>
+    <span class="sub mono">3D relief model — 21 tiles — 1:12,500</span>
+  </div>
+
+  <model-viewer
+    id="viewer"
+    camera-controls
+    touch-action="pan-y"
+    shadow-intensity="0.9"
+    shadow-softness="0.8"
+    exposure="1.05"
+    environment-image="neutral"
+    interaction-prompt="none"
+    orientation="-90deg 0deg 0deg"
+    camera-orbit="35deg 60deg 620m"
+    field-of-view="32deg"
+    min-camera-orbit="auto auto 60m"
+    max-camera-orbit="auto auto 1400m"
+  ></model-viewer>
+
+  <div id="loading">
+    <div class="mark" id="loading-mark">Loading terrain &amp; buildings</div>
+    <div class="barwrap"><div class="bar" id="loadbar"></div></div>
+    <div class="note" id="loading-note">3.08M faces, Draco-compressed. Should only take a few seconds.</div>
+    <div class="note mono" id="loading-log" style="text-align:left; max-width:520px; white-space:pre-wrap; opacity:0.7;"></div>
+  </div>
+
+  <button id="panel-toggle" aria-label="Toggle legend panel" aria-expanded="true">☰ Index</button>
+  <aside id="panel">
+    <div id="panel-scroll">
+      <h2>Legend</h2>
+      <div class="legend-row"><span class="swatch" style="background:#d2b48c"></span>Buildings (general)<span class="legend-count mono" id="count-building_default"></span></div>
+      <div class="legend-row"><span class="swatch" style="background:#d62728"></span>Hospitals<span class="legend-count mono" id="count-hospital"></span></div>
+      <div class="legend-row"><span class="swatch" style="background:#1f4e9c"></span>Government / public<span class="legend-count mono" id="count-government"></span></div>
+      <div class="legend-row"><span class="swatch" style="background:#f28c28"></span>Mercer University<span class="legend-count mono" id="count-mercer"></span></div>
+      <div class="legend-row"><span class="swatch" style="background:#b8934a"></span>Other named landmarks<span class="legend-count mono" id="count-landmark"></span></div>
+      <div class="legend-row"><span class="swatch" style="background:#787878"></span>Roads</div>
+      <div class="legend-row"><span class="swatch" style="background:#9690a7"></span>Parking lots</div>
+      <div class="legend-row"><span class="swatch" style="background:#4678c8"></span>Water</div>
+      <div class="legend-row"><span class="swatch" style="background:#5aa05a"></span>Terrain (2.5x exaggerated)</div>
+
+      <h2>Landmark index</h2>
+      <p class="desc" style="margin-bottom:0.5rem">Click any building to fly the camera to it. Real elevation data — <a href="#" id="reset-view-link" class="mono" style="color:var(--brass-bright)">reset view</a>.</p>
+      <div id="landmark-groups"></div>
+    </div>
+    <div id="controls-hint">
+      <kbd>drag</kbd> orbit &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>shift+drag</kbd> pan
+    </div>
+  </aside>
+</div>
+
+<script>
+  // Intercept fetch() calls for the Draco decoder files that model-viewer's
+  // bundled DRACOLoader normally pulls from Google's CDN
+  // (gstatic.com/draco/...) and serve them from embedded base64 data instead
+  // -- this page must be fully self-contained (no external network calls),
+  // and DRACOLoader itself has no built-in "use this local decoder" option,
+  // only a configurable URL path it fetches from. Verified against the
+  // bundled source: DRACOLoader._loadLibrary() fetches "draco_decoder.js" as
+  // text or "draco_wasm_wrapper.js" (text) + "draco_decoder.wasm"
+  // (arraybuffer) on the main thread via a FileLoader, THEN builds the
+  // worker from an already-fetched Blob -- so patching fetch() here is
+  // sufficient; no need to reach into the worker's own scope.
+  //
+  // IMPORTANT: this same interception is ALSO used for the model itself.
+  // model-viewer's internal loader always does fetch(viewer.src) no matter
+  // what URL scheme is used -- and this environment's CSP is
+  // "connect-src 'self'", which blocks fetch() on blob: URLs entirely (this
+  // was tested directly: URL.createObjectURL(modelBlob) + viewer.src =
+  // objectUrl failed with "Refused to connect because it violates the
+  // document's Content Security Policy"). So instead of a real blob: URL,
+  // viewer.src is set to a plain sentinel path (EMBEDDED_MODEL_URL below)
+  // that never touches the network at all -- fetch() for it is caught here
+  // and answered directly from memory, same as the Draco files.
+  window.EMBEDDED_MODEL_URL = "embedded-model.glb";
+  (function () {
+    const LOCAL_ASSETS = {
+      "draco_decoder.js": { mime: "text/javascript", b64: "__DRACO_DECODER_JS_B64__" },
+      "draco_wasm_wrapper.js": { mime: "text/javascript", b64: "__DRACO_WASM_WRAPPER_JS_B64__" },
+      "draco_decoder.wasm": { mime: "application/wasm", b64: "__DRACO_DECODER_WASM_B64__" },
+      [window.EMBEDDED_MODEL_URL]: { mime: "model/gltf-binary", b64: "__MODEL_DATA_B64__" },
+    };
+    function matchLocal(url) {
+      for (const name in LOCAL_ASSETS) {
+        if (String(url).indexOf(name) !== -1) return LOCAL_ASSETS[name];
+      }
+      return null;
+    }
+    function b64ToUint8(b64) {
+      // chunked decode -- the model's base64 string is several MB, and
+      // decoding it in one atob() call on some engines is slow/risky
+      const chunkSize = 1024 * 1024;
+      const parts = [];
+      let total = 0;
+      for (let offset = 0; offset < b64.length; offset += chunkSize) {
+        const bin = atob(b64.slice(offset, offset + chunkSize));
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        parts.push(arr);
+        total += arr.length;
+      }
+      const out = new Uint8Array(total);
+      let pos = 0;
+      for (const p of parts) { out.set(p, pos); pos += p.length; }
+      return out;
+    }
+    const realFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const url = typeof input === "string" ? input : input.url;
+      const match = matchLocal(url);
+      if (match) {
+        const bytes = b64ToUint8(match.b64);
+        return Promise.resolve(new Response(bytes, { status: 200, headers: { "Content-Type": match.mime } }));
+      }
+      return realFetch(input, init);
+    };
+  })();
+</script>
+<script type="module">__MODEL_VIEWER_JS__</script>
+<script>
+// Wait for the model-viewer.min.js module script (deferred, since it's
+// type="module") to actually register the custom element before touching
+// it -- a plain classic <script> right after a module <script> is NOT
+// guaranteed to run after it finishes, so this is the robust way to
+// sequence this regardless of module-vs-classic execution-order subtleties.
+customElements.whenDefined("model-viewer").then(() => {
+  const LANDMARKS = __LANDMARKS_JSON__;
+
+  const CATEGORY_LABEL = {
+    hospital: "Hospitals",
+    government: "Government / Public",
+    mercer: "Mercer University",
+    landmark: "Other Landmarks",
+  };
+  const CATEGORY_COLOR = {
+    hospital: "#d62728",
+    government: "#1f4e9c",
+    mercer: "#f28c28",
+    landmark: "#b8934a",
+  };
+
+  const viewer = document.getElementById("viewer");
+  const landmarkGroupsEl = document.getElementById("landmark-groups");
+  const loadingEl = document.getElementById("loading");
+  const loadbar = document.getElementById("loadbar");
+  const panel = document.getElementById("panel");
+  const panelToggle = document.getElementById("panel-toggle");
+
+  const DEFAULT_ORBIT = "35deg 60deg 620m";
+  const DEFAULT_TARGET = "0m 12m 0m";
+
+  // ---- build hotspots + index list ----
+  const grouped = {};
+  for (const lm of LANDMARKS) {
+    (grouped[lm.category] ||= []).push(lm);
+  }
+
+  for (const lm of LANDMARKS) {
+    const hs = document.createElement("button");
+    hs.className = "hotspot";
+    hs.slot = "hotspot-" + lm.id;
+    // NOTE: data-position/data-normal and cameraTarget both take the RAW
+    // authored (x, y, z) directly -- NO axis swap. Verified rigorously via
+    // model-viewer's own positionAndNormalFromPoint() API: raycasting at
+    // points along the model's circular edge returns (x, y) magnitudes that
+    // exactly match the known disk radius (449mm) with z as the small
+    // (0-24mm) leftover height component -- i.e. model-viewer's hotspot/
+    // camera coordinate space already matches the mesh's own authored space
+    // one-to-one, with `orientation` handling display rotation internally.
+    // (An earlier manual (x, z, -y) "fix" was based on a false-positive
+    // color-match test and made things worse -- reverted.)
+    hs.dataset.position = `${lm.x}m ${lm.y}m ${lm.z}m`;
+    hs.dataset.normal = "0m 0m 1m";
+    hs.innerHTML = `<span class="dot" style="background:${CATEGORY_COLOR[lm.category]}"></span><span class="label">${lm.name}</span>`;
+    hs.addEventListener("click", () => focusOn(lm));
+    hs.id = "hs-" + lm.id;
+    viewer.appendChild(hs);
+  }
+
+  const order = ["hospital", "government", "mercer", "landmark"];
+  for (const cat of order) {
+    const items = grouped[cat] || [];
+    if (!items.length) continue;
+    const details = document.createElement("details");
+    details.className = "landmark-group";
+    details.open = cat === "hospital";
+    const summary = document.createElement("summary");
+    summary.textContent = `${CATEGORY_LABEL[cat]} (${items.length})`;
+    details.appendChild(summary);
+    for (const lm of items) {
+      const btn = document.createElement("button");
+      btn.className = "landmark-btn";
+      btn.id = "idx-" + lm.id;
+      btn.innerHTML = `${lm.name}<span class="h mono">x ${lm.x.toFixed(0)}  y ${lm.y.toFixed(0)}mm</span>`;
+      btn.addEventListener("click", () => focusOn(lm));
+      details.appendChild(btn);
+    }
+    landmarkGroupsEl.appendChild(details);
+  }
+
+  for (const cat of ["building_default", "hospital", "government", "mercer", "landmark"]) {
+    const el = document.getElementById("count-" + cat);
+    if (!el) continue;
+    if (cat === "building_default") { el.textContent = ""; continue; }
+    el.textContent = (grouped[cat] || []).length;
+  }
+
+  let activeId = null;
+  function focusOn(lm) {
+    // NOTE: cameraTarget/cameraOrbit use a DIFFERENT convention than hotspot
+    // data-position above -- verified empirically: raw (x,y,z) as a camera
+    // target lands in a random floodplain far from downtown, while the
+    // (x, z, -y) swap correctly centers on the clicked landmark's real
+    // neighborhood. (Hotspot data-position, by contrast, was proven via
+    // positionAndNormalFromPoint()'s edge-radius test to need NO swap.)
+    viewer.cameraTarget = `${lm.x}m ${lm.z}m ${-lm.y}m`;
+    // NOTE: 350m, not something tighter. Two independent constraints set
+    // this floor: (1) this model's near-clip plane is computed from the
+    // whole 900mm-wide disk's bounding sphere, so distances much closer
+    // than ~200m clip to a black screen (verified: 90m totally black, 150m
+    // hazy, 250m clean); (2) the (x, z, -y) swap's camera-target aim has
+    // measured slop of ~10-30mm versus the true landmark point (verified
+    // via positionAndNormalFromPoint() raycasts vs. the landmark's own
+    // authored coordinate) -- likely inherent to targeting a single
+    // representative rooftop point from an oblique angle rather than a
+    // true per-vertex drape. 350m keeps that slop a small fraction of the
+    // visible frame so the target building reliably stays in view.
+    viewer.cameraOrbit = `-30deg 65deg 350m`;
+    if (activeId) {
+      document.getElementById("hs-" + activeId)?.classList.remove("pulsing");
+      document.getElementById("idx-" + activeId)?.classList.remove("active");
+    }
+    activeId = lm.id;
+    document.getElementById("hs-" + activeId)?.classList.add("pulsing");
+    document.getElementById("idx-" + activeId)?.classList.add("active");
+    setTimeout(() => document.getElementById("hs-" + activeId)?.classList.remove("pulsing"), 2200);
+  }
+
+  document.getElementById("reset-view-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    viewer.cameraTarget = DEFAULT_TARGET;
+    viewer.cameraOrbit = DEFAULT_ORBIT;
+    if (activeId) {
+      document.getElementById("idx-" + activeId)?.classList.remove("active");
+      activeId = null;
+    }
+  });
+
+  panelToggle.addEventListener("click", () => {
+    const collapsed = panel.classList.toggle("collapsed");
+    panelToggle.classList.toggle("collapsed", collapsed);
+    panelToggle.setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  // ---- load the embedded model (base64 -> Blob -> object URL) ----
+  // Verbose logging + visible on-page log throughout: this page can't be
+  // browser-tested from where it's built, so if loading stalls, the log
+  // below (and the browser console) should show exactly which step it got
+  // stuck on rather than hanging with no information.
+  const loadingLog = document.getElementById("loading-log");
+  const loadingMark = document.getElementById("loading-mark");
+  const loadingNote = document.getElementById("loading-note");
+  let loadStartTime = Date.now();
+  function log(msg) {
+    const t = ((Date.now() - loadStartTime) / 1000).toFixed(1);
+    const line = `[${t}s] ${msg}`;
+    console.log("[downtown-macon-3d]", line);
+    loadingLog.textContent += line + "\n";
+  }
+  function showError(msg) {
+    loadingMark.textContent = "Something went wrong";
+    loadingMark.style.color = "var(--clay)";
+    loadingNote.textContent = "See details below. Open your browser console (F12) for more.";
+    log("ERROR: " + msg);
+  }
+
+  window.addEventListener("error", (e) => showError(e.message || String(e.error)));
+  window.addEventListener("unhandledrejection", (e) => showError("unhandled promise rejection: " + (e.reason?.message || e.reason)));
+
+  viewer.addEventListener("progress", (event) => {
+    const pct = Math.round(event.detail.totalProgress * 100);
+    loadbar.style.width = pct + "%";
+    log(`model-viewer progress: ${pct}% (${event.detail.reason || ""})`);
+  });
+  viewer.addEventListener("error", (event) => {
+    showError("model-viewer reported a load error: " + JSON.stringify(event.detail || event));
+  });
+  viewer.addEventListener("load", () => {
+    log("model-viewer 'load' event fired -- scene ready");
+    loadingEl.classList.add("hidden");
+  });
+
+  log("starting model load...");
+  try {
+    // NOT a blob: URL -- this sentinel path is intercepted by the fetch()
+    // patch installed earlier in the page and answered from embedded
+    // memory, since blob: fetches are blocked by this environment's
+    // "connect-src 'self'" CSP (confirmed directly).
+    log(`setting viewer.src = "${window.EMBEDDED_MODEL_URL}" (served locally via fetch() interception)`);
+    viewer.src = window.EMBEDDED_MODEL_URL;
+    log("viewer.src set -- waiting for model-viewer progress/load events");
+  } catch (err) {
+    showError("failed while setting viewer.src: " + err.message);
+  }
+
+  setTimeout(() => {
+    if (!loadingEl.classList.contains("hidden")) {
+      showError("timed out after 25s waiting for model-viewer to finish loading. " +
+        "Possible causes: the Draco decoder worker failed to start (e.g. a CSP " +
+        "restriction on Worker creation), or GLTF/Draco parsing failed silently. " +
+        "Check the console above this log for more detail.");
+    }
+  }, 25000);
+}); // end customElements.whenDefined("model-viewer")
+</script>
