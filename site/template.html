@@ -238,20 +238,27 @@
   }
 
   /* ---------- viewer ---------- */
-  model-viewer {
+  #viewer-container {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    --poster-color: transparent;
+  }
+  #viewer-container canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
   }
 
   .hotspot {
+    position: absolute;
     background: transparent;
     border: none;
     padding: 0;
     cursor: pointer;
     transform: translate(-50%, -50%);
+    pointer-events: auto;
   }
   .hotspot .dot {
     width: 11px;
@@ -344,21 +351,7 @@
     <span class="sub mono">3D relief model — 21 tiles — 1:12,500</span>
   </div>
 
-  <model-viewer
-    id="viewer"
-    camera-controls
-    touch-action="pan-y"
-    shadow-intensity="0.9"
-    shadow-softness="0.8"
-    exposure="1.05"
-    environment-image="neutral"
-    interaction-prompt="none"
-    orientation="-90deg 0deg 0deg"
-    camera-orbit="35deg 60deg 620m"
-    field-of-view="32deg"
-    min-camera-orbit="auto auto 60m"
-    max-camera-orbit="auto auto 1400m"
-  ></model-viewer>
+  <div id="viewer-container"></div>
 
   <div id="loading">
     <div class="mark" id="loading-mark">Loading terrain &amp; buildings</div>
@@ -386,41 +379,39 @@
       <div id="landmark-groups"></div>
     </div>
     <div id="controls-hint">
-      <kbd>drag</kbd> orbit &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>shift+drag</kbd> pan
+      <kbd>W A S D</kbd> move &nbsp; <kbd>drag</kbd> look &nbsp; <kbd>Q E</kbd> down/up &nbsp; <kbd>shift</kbd> boost
     </div>
   </aside>
 </div>
 
+<script type="importmap">
+{
+  "imports": {
+    "three": "data:text/javascript;base64,__THREE_MODULE_B64__",
+    "three/addons/utils/BufferGeometryUtils.js": "data:text/javascript;base64,__BUFFER_GEOMETRY_UTILS_B64__",
+    "three/addons/loaders/GLTFLoader.js": "data:text/javascript;base64,__GLTF_LOADER_B64__",
+    "three/addons/loaders/DRACOLoader.js": "data:text/javascript;base64,__DRACO_LOADER_B64__"
+  }
+}
+</script>
 <script>
-  // Intercept fetch() calls for the Draco decoder files that model-viewer's
-  // bundled DRACOLoader normally pulls from Google's CDN
-  // (gstatic.com/draco/...) and serve them from embedded base64 data instead
-  // -- this page must be fully self-contained (no external network calls),
-  // and DRACOLoader itself has no built-in "use this local decoder" option,
-  // only a configurable URL path it fetches from. Verified against the
-  // bundled source: DRACOLoader._loadLibrary() fetches "draco_decoder.js" as
-  // text or "draco_wasm_wrapper.js" (text) + "draco_decoder.wasm"
-  // (arraybuffer) on the main thread via a FileLoader, THEN builds the
-  // worker from an already-fetched Blob -- so patching fetch() here is
-  // sufficient; no need to reach into the worker's own scope.
-  //
-  // IMPORTANT: this same interception is ALSO used for the model itself.
-  // model-viewer's internal loader always does fetch(viewer.src) no matter
-  // what URL scheme is used -- and this environment's CSP is
-  // "connect-src 'self'", which blocks fetch() on blob: URLs entirely (this
-  // was tested directly: URL.createObjectURL(modelBlob) + viewer.src =
-  // objectUrl failed with "Refused to connect because it violates the
-  // document's Content Security Policy"). So instead of a real blob: URL,
-  // viewer.src is set to a plain sentinel path (EMBEDDED_MODEL_URL below)
-  // that never touches the network at all -- fetch() for it is caught here
-  // and answered directly from memory, same as the Draco files.
-  window.EMBEDDED_MODEL_URL = "embedded-model.glb";
+  // Intercept fetch() calls for the Draco decoder files that DRACOLoader
+  // pulls via its configurable decoderPath (default: none set, so it fetches
+  // bare filenames relative to the page) -- this page must be fully
+  // self-contained with zero external network calls, and DRACOLoader has no
+  // built-in "use this local decoder" option, only a URL it fetches from.
+  // DRACOLoader._loadLibrary() fetches "draco_decoder.js" (text) or
+  // "draco_wasm_wrapper.js" (text) + "draco_decoder.wasm" (arraybuffer) via a
+  // FileLoader (which uses fetch() under the hood) before building its
+  // worker -- so patching fetch() here is sufficient, same proven pattern as
+  // before. The model itself no longer needs this treatment: GLTFLoader.parse()
+  // takes an ArrayBuffer directly, so the decoded model bytes go straight in
+  // without ever touching fetch() or a blob: URL at all.
   (function () {
     const LOCAL_ASSETS = {
       "draco_decoder.js": { mime: "text/javascript", b64: "__DRACO_DECODER_JS_B64__" },
       "draco_wasm_wrapper.js": { mime: "text/javascript", b64: "__DRACO_WASM_WRAPPER_JS_B64__" },
       "draco_decoder.wasm": { mime: "application/wasm", b64: "__DRACO_DECODER_WASM_B64__" },
-      [window.EMBEDDED_MODEL_URL]: { mime: "model/gltf-binary", b64: "__MODEL_DATA_B64__" },
     };
     function matchLocal(url) {
       for (const name in LOCAL_ASSETS) {
@@ -429,8 +420,6 @@
       return null;
     }
     function b64ToUint8(b64) {
-      // chunked decode -- the model's base64 string is several MB, and
-      // decoding it in one atob() call on some engines is slow/risky
       const chunkSize = 1024 * 1024;
       const parts = [];
       let total = 0;
@@ -458,65 +447,182 @@
     };
   })();
 </script>
-<script type="module">__MODEL_VIEWER_JS__</script>
-<script>
-// Wait for the model-viewer.min.js module script (deferred, since it's
-// type="module") to actually register the custom element before touching
-// it -- a plain classic <script> right after a module <script> is NOT
-// guaranteed to run after it finishes, so this is the robust way to
-// sequence this regardless of module-vs-classic execution-order subtleties.
-customElements.whenDefined("model-viewer").then(() => {
-  const LANDMARKS = __LANDMARKS_JSON__;
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 
-  const CATEGORY_LABEL = {
-    hospital: "Hospitals",
-    government: "Government / Public",
-    mercer: "Mercer University",
-    landmark: "Other Landmarks",
-  };
-  const CATEGORY_COLOR = {
-    hospital: "#d62728",
-    government: "#1f4e9c",
-    mercer: "#f28c28",
-    landmark: "#b8934a",
-  };
+const LANDMARKS = __LANDMARKS_JSON__;
 
-  const viewer = document.getElementById("viewer");
-  const landmarkGroupsEl = document.getElementById("landmark-groups");
-  const loadingEl = document.getElementById("loading");
-  const loadbar = document.getElementById("loadbar");
-  const panel = document.getElementById("panel");
-  const panelToggle = document.getElementById("panel-toggle");
+const CATEGORY_LABEL = {
+  hospital: "Hospitals",
+  government: "Government / Public",
+  mercer: "Mercer University",
+  landmark: "Other Landmarks",
+};
+const CATEGORY_COLOR = {
+  hospital: "#d62728",
+  government: "#1f4e9c",
+  mercer: "#f28c28",
+  landmark: "#b8934a",
+};
 
-  const DEFAULT_ORBIT = "35deg 60deg 620m";
-  const DEFAULT_TARGET = "0m 12m 0m";
+const container = document.getElementById("viewer-container");
+const landmarkGroupsEl = document.getElementById("landmark-groups");
+const loadingEl = document.getElementById("loading");
+const loadbar = document.getElementById("loadbar");
+const panel = document.getElementById("panel");
+const panelToggle = document.getElementById("panel-toggle");
 
-  // ---- build hotspots + index list ----
-  const grouped = {};
-  for (const lm of LANDMARKS) {
-    (grouped[lm.category] ||= []).push(lm);
+// ---- logging (same philosophy as before: this page can't be browser-tested
+// from where it's built, so a visible on-page log is essential for diagnosing
+// a stuck load rather than hanging with no information) ----
+const loadingLog = document.getElementById("loading-log");
+const loadingMark = document.getElementById("loading-mark");
+const loadingNote = document.getElementById("loading-note");
+let loadStartTime = Date.now();
+function log(msg) {
+  const t = ((Date.now() - loadStartTime) / 1000).toFixed(1);
+  const line = `[${t}s] ${msg}`;
+  console.log("[macon-3d-map]", line);
+  loadingLog.textContent += line + "\n";
+}
+function showError(msg) {
+  loadingMark.textContent = "Something went wrong";
+  loadingMark.style.color = "var(--clay)";
+  loadingNote.textContent = "See details below. Open your browser console (F12) for more.";
+  log("ERROR: " + msg);
+}
+window.addEventListener("error", (e) => showError(e.message || String(e.error)));
+window.addEventListener("unhandledrejection", (e) => showError("unhandled promise rejection: " + (e.reason?.message || e.reason)));
+
+// ---- scene / camera / renderer ----
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x12181a); // matches --ink
+
+// near/far fully under our control here (unlike the old model-viewer setup,
+// where an internal auto-computed near-clip plane based on the whole disk's
+// bounding sphere caused close-up hotspot zooms to clip to a black screen) --
+// so the free-roam camera can safely get much closer to the ground than
+// before without any equivalent issue.
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 5000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+container.appendChild(renderer.domElement);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+scene.add(new THREE.HemisphereLight(0xdce8f2, 0x3a3324, 0.55));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
+sun.position.set(250, 420, 180);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -480;
+sun.shadow.camera.right = 480;
+sun.shadow.camera.top = 480;
+sun.shadow.camera.bottom = -480;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 1200;
+scene.add(sun);
+
+// ---- model root: ONE rotation applied here converts the mesh's authored
+// Z-up local space (x,y horizontal, z=height) into Three.js's conventional
+// Y-up world space -- same visual effect as the old model-viewer
+// orientation="-90deg 0deg 0deg" attribute. Hotspot markers below are
+// parented as children of this SAME group using their raw authored (x,y,z)
+// directly, so the scene graph applies this rotation for them automatically
+// -- no manual axis-swap math anywhere, avoiding the whole class of bug that
+// took so long to debug under model-viewer (see CLAUDE.md). ----
+const modelGroup = new THREE.Group();
+modelGroup.rotation.x = -Math.PI / 2;
+scene.add(modelGroup);
+window.__debug = { THREE, scene, camera, renderer, modelGroup };
+
+// ---- load model: GLTFLoader.parse() takes an ArrayBuffer directly, so the
+// embedded model bytes go straight in without ever touching fetch() or a
+// blob: URL (unlike the old model-viewer setup, which required a fake
+// sentinel-URL fetch-interception trick just to hand it a URL-shaped src).
+// DRACOLoader still needs the fetch-interception above for its own decoder
+// files. ----
+function b64ToArrayBuffer(b64) {
+  const chunkSize = 1024 * 1024;
+  const parts = [];
+  let total = 0;
+  for (let offset = 0; offset < b64.length; offset += chunkSize) {
+    const bin = atob(b64.slice(offset, offset + chunkSize));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    parts.push(arr);
+    total += arr.length;
   }
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const p of parts) { out.set(p, pos); pos += p.length; }
+  return out.buffer;
+}
 
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath(""); // bare filenames, matching the fetch-interception patterns above
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
+
+log("decoding embedded model base64...");
+const modelBuffer = b64ToArrayBuffer("__MODEL_DATA_B64__");
+log(`model decoded, ${(modelBuffer.byteLength / 1e6).toFixed(2)}MB -- parsing glTF...`);
+
+let hotspotEls = null;
+
+gltfLoader.parse(modelBuffer, "", (gltf) => {
+  log("glTF parsed OK -- scene ready");
+  gltf.scene.traverse((obj) => {
+    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+  });
+  modelGroup.add(gltf.scene);
+  hotspotEls = buildHotspots();
+  frameDefaultView();
+  loadingEl.classList.add("hidden");
+  requestAnimationFrame(animate);
+}, (err) => {
+  showError("GLTFLoader failed to parse the embedded model: " + (err?.message || err));
+});
+
+setTimeout(() => {
+  if (!loadingEl.classList.contains("hidden")) {
+    showError("timed out after 25s waiting for the model to parse. " +
+      "Possible causes: the Draco decoder failed to initialize (e.g. a CSP " +
+      "restriction on Worker creation), or glTF/Draco parsing failed silently. " +
+      "Check the console above this log for more detail.");
+  }
+}, 25000);
+
+// ---- hotspots: plain DOM elements positioned every frame via camera
+// projection, parented (in world-space terms) to modelGroup so their world
+// position is computed once via localToWorld and never needs re-deriving. ----
+function buildHotspots() {
+  const grouped = {};
+  for (const lm of LANDMARKS) (grouped[lm.category] ||= []).push(lm);
+
+  const els = new Map();
   for (const lm of LANDMARKS) {
-    const hs = document.createElement("button");
-    hs.className = "hotspot";
-    hs.slot = "hotspot-" + lm.id;
-    // NOTE: data-position/data-normal and cameraTarget both take the RAW
-    // authored (x, y, z) directly -- NO axis swap. Verified rigorously via
-    // model-viewer's own positionAndNormalFromPoint() API: raycasting at
-    // points along the model's circular edge returns (x, y) magnitudes that
-    // exactly match the known disk radius (449mm) with z as the small
-    // (0-24mm) leftover height component -- i.e. model-viewer's hotspot/
-    // camera coordinate space already matches the mesh's own authored space
-    // one-to-one, with `orientation` handling display rotation internally.
-    // (An earlier manual (x, z, -y) "fix" was based on a false-positive
-    // color-match test and made things worse -- reverted.)
-    hs.dataset.position = `${lm.x}m ${lm.y}m ${lm.z}m`;
-    hs.dataset.normal = "0m 0m 1m";
-    hs.innerHTML = `<span class="dot" style="background:${CATEGORY_COLOR[lm.category]}"></span><span class="label">${lm.name}</span>`;
-    hs.addEventListener("click", () => focusOn(lm));
-    hs.id = "hs-" + lm.id;
-    viewer.appendChild(hs);
+    const el = document.createElement("button");
+    el.className = "hotspot";
+    el.id = "hs-" + lm.id;
+    el.innerHTML = `<span class="dot" style="background:${CATEGORY_COLOR[lm.category]}"></span><span class="label">${lm.name}</span>`;
+    el.addEventListener("click", () => focusOn(lm));
+    container.appendChild(el);
+    const worldPos = new THREE.Vector3(lm.x, lm.y, lm.z);
+    modelGroup.localToWorld(worldPos);
+    els.set(lm.id, { el, worldPos });
   }
 
   const order = ["hospital", "government", "mercer", "landmark"];
@@ -547,111 +653,180 @@ customElements.whenDefined("model-viewer").then(() => {
     el.textContent = (grouped[cat] || []).length;
   }
 
-  let activeId = null;
-  function focusOn(lm) {
-    // NOTE: cameraTarget/cameraOrbit use a DIFFERENT convention than hotspot
-    // data-position above -- verified empirically: raw (x,y,z) as a camera
-    // target lands in a random floodplain far from downtown, while the
-    // (x, z, -y) swap correctly centers on the clicked landmark's real
-    // neighborhood. (Hotspot data-position, by contrast, was proven via
-    // positionAndNormalFromPoint()'s edge-radius test to need NO swap.)
-    viewer.cameraTarget = `${lm.x}m ${lm.z}m ${-lm.y}m`;
-    // NOTE: 350m, not something tighter. Two independent constraints set
-    // this floor: (1) this model's near-clip plane is computed from the
-    // whole 900mm-wide disk's bounding sphere, so distances much closer
-    // than ~200m clip to a black screen (verified: 90m totally black, 150m
-    // hazy, 250m clean); (2) the (x, z, -y) swap's camera-target aim has
-    // measured slop of ~10-30mm versus the true landmark point (verified
-    // via positionAndNormalFromPoint() raycasts vs. the landmark's own
-    // authored coordinate) -- likely inherent to targeting a single
-    // representative rooftop point from an oblique angle rather than a
-    // true per-vertex drape. 350m keeps that slop a small fraction of the
-    // visible frame so the target building reliably stays in view.
-    viewer.cameraOrbit = `-30deg 65deg 350m`;
-    if (activeId) {
-      document.getElementById("hs-" + activeId)?.classList.remove("pulsing");
-      document.getElementById("idx-" + activeId)?.classList.remove("active");
+  return els;
+}
+
+function updateHotspotScreenPositions() {
+  if (!hotspotEls) return;
+  const halfW = window.innerWidth / 2, halfH = window.innerHeight / 2;
+  const v = new THREE.Vector3();
+  for (const { el, worldPos } of hotspotEls.values()) {
+    v.copy(worldPos).project(camera);
+    if (v.z > 1 || v.x < -1.3 || v.x > 1.3 || v.y < -1.3 || v.y > 1.3) {
+      el.style.display = "none";
+      continue;
     }
-    activeId = lm.id;
-    document.getElementById("hs-" + activeId)?.classList.add("pulsing");
-    document.getElementById("idx-" + activeId)?.classList.add("active");
-    setTimeout(() => document.getElementById("hs-" + activeId)?.classList.remove("pulsing"), 2200);
+    el.style.display = "";
+    el.style.left = (v.x * halfW + halfW) + "px";
+    el.style.top = (-v.y * halfH + halfH) + "px";
   }
+}
 
-  document.getElementById("reset-view-link").addEventListener("click", (e) => {
-    e.preventDefault();
-    viewer.cameraTarget = DEFAULT_TARGET;
-    viewer.cameraOrbit = DEFAULT_ORBIT;
-    if (activeId) {
-      document.getElementById("idx-" + activeId)?.classList.remove("active");
-      activeId = null;
+// ---- free-roam camera: WASD move, drag to look, Q/E down/up, shift to
+// boost speed. Pitch is clamped so you can never rotate past looking
+// straight up or down -- i.e. the map can never be flipped upside down. ----
+let yaw = 0, pitch = -0.5;
+const PITCH_LIMIT = 89 * Math.PI / 180;
+const keys = new Set();
+window.addEventListener("keydown", (e) => { keys.add(e.code); });
+window.addEventListener("keyup", (e) => { keys.delete(e.code); });
+
+let dragging = false, lastX = 0, lastY = 0;
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener("pointerup", () => { dragging = false; });
+window.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  yaw -= dx * 0.0035;
+  pitch -= dy * 0.0035;
+  pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
+});
+renderer.domElement.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  camera.position.addScaledVector(dir, -e.deltaY * 0.6);
+}, { passive: false });
+
+const MOVE_SPEED = 220; // mm/sec (this model's local unit), matches the ~900mm-wide disk
+const BOOST_MULTIPLIER = 3;
+
+function updateMovement(dt) {
+  let speed = MOVE_SPEED * dt;
+  if (keys.has("ShiftLeft") || keys.has("ShiftRight")) speed *= BOOST_MULTIPLIER;
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() > 1e-6) forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+  const move = new THREE.Vector3();
+  if (keys.has("KeyW")) move.add(forward);
+  if (keys.has("KeyS")) move.sub(forward);
+  if (keys.has("KeyD")) move.add(right);
+  if (keys.has("KeyA")) move.sub(right);
+  if (keys.has("KeyE")) move.y += 1;
+  if (keys.has("KeyQ")) move.y -= 1;
+  if (move.lengthSq() > 0) {
+    move.normalize().multiplyScalar(speed);
+    camera.position.add(move);
+  }
+}
+
+// ---- landmark fly-to + default view: both implemented as a quaternion
+// slerp toward a THREE.Object3D.lookAt() result, rather than hand-derived
+// yaw/pitch trigonometry -- lookAt() is well-tested and removes an entire
+// class of sign-convention mistakes. yaw/pitch are only re-extracted (via
+// Euler decomposition) once the tween finishes, so manual look controls
+// resume smoothly from exactly where the tween left off. ----
+let tween = null;
+
+function startTweenTo(worldTarget, offset, duration = 900) {
+  const endPos = worldTarget.clone().add(offset);
+  const dummy = new THREE.Object3D();
+  // NOTE: Object3D.lookAt() has a special-cased branch specifically for
+  // isCamera/isLight objects (aims the object's -Z at the target -- correct
+  // camera behavior); a plain Object3D gets the REVERSED convention (+Z
+  // toward target, meant for billboards/sprites). Verified empirically after
+  // getting exactly backwards results otherwise: set isCamera so this dummy
+  // takes the camera branch.
+  dummy.isCamera = true;
+  dummy.position.copy(endPos);
+  dummy.up.set(0, 1, 0);
+  dummy.lookAt(worldTarget);
+  tween = {
+    startTime: performance.now(),
+    duration,
+    startPos: camera.position.clone(),
+    endPos,
+    startQuat: camera.quaternion.clone(),
+    endQuat: dummy.quaternion.clone(),
+  };
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+let activeId = null;
+function focusOn(lm) {
+  const target = new THREE.Vector3(lm.x, lm.y, lm.z);
+  modelGroup.localToWorld(target);
+  // fixed relative offset (world space, post-rotation), tuned for a genuinely
+  // close view of a single building -- the whole disk is uniformly dense
+  // with buildings, so a moderate-distance offset still looks like "the wide
+  // view" rather than a real zoom-in; this needs to be tight.
+  startTweenTo(target, new THREE.Vector3(-55, 50, 80));
+
+  if (activeId) {
+    document.getElementById("hs-" + activeId)?.classList.remove("pulsing");
+    document.getElementById("idx-" + activeId)?.classList.remove("active");
+  }
+  activeId = lm.id;
+  document.getElementById("hs-" + activeId)?.classList.add("pulsing");
+  document.getElementById("idx-" + activeId)?.classList.add("active");
+  setTimeout(() => document.getElementById("hs-" + activeId)?.classList.remove("pulsing"), 2200);
+}
+
+function frameDefaultView() {
+  const target = new THREE.Vector3(0, 0, 12); // disk center, roughly rooftop height
+  modelGroup.localToWorld(target);
+  startTweenTo(target, new THREE.Vector3(300, 340, 430), 0); // duration 0: snap immediately on load
+}
+
+document.getElementById("reset-view-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  frameDefaultView();
+  tween.duration = 900; // this time animate the return, rather than snapping
+  tween.startTime = performance.now();
+  if (activeId) {
+    document.getElementById("idx-" + activeId)?.classList.remove("active");
+    activeId = null;
+  }
+});
+
+panelToggle.addEventListener("click", () => {
+  const collapsed = panel.classList.toggle("collapsed");
+  panelToggle.classList.toggle("collapsed", collapsed);
+  panelToggle.setAttribute("aria-expanded", String(!collapsed));
+});
+
+// ---- render loop ----
+let lastFrameTime = performance.now();
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
+  lastFrameTime = now;
+
+  if (tween) {
+    const t = tween.duration <= 0 ? 1 : Math.min(1, (performance.now() - tween.startTime) / tween.duration);
+    const e = easeInOutCubic(t);
+    camera.position.lerpVectors(tween.startPos, tween.endPos, e);
+    camera.quaternion.slerpQuaternions(tween.startQuat, tween.endQuat, e);
+    if (t >= 1) {
+      const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+      yaw = euler.y;
+      pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, euler.x));
+      tween = null;
     }
-  });
-
-  panelToggle.addEventListener("click", () => {
-    const collapsed = panel.classList.toggle("collapsed");
-    panelToggle.classList.toggle("collapsed", collapsed);
-    panelToggle.setAttribute("aria-expanded", String(!collapsed));
-  });
-
-  // ---- load the embedded model (base64 -> Blob -> object URL) ----
-  // Verbose logging + visible on-page log throughout: this page can't be
-  // browser-tested from where it's built, so if loading stalls, the log
-  // below (and the browser console) should show exactly which step it got
-  // stuck on rather than hanging with no information.
-  const loadingLog = document.getElementById("loading-log");
-  const loadingMark = document.getElementById("loading-mark");
-  const loadingNote = document.getElementById("loading-note");
-  let loadStartTime = Date.now();
-  function log(msg) {
-    const t = ((Date.now() - loadStartTime) / 1000).toFixed(1);
-    const line = `[${t}s] ${msg}`;
-    console.log("[downtown-macon-3d]", line);
-    loadingLog.textContent += line + "\n";
-  }
-  function showError(msg) {
-    loadingMark.textContent = "Something went wrong";
-    loadingMark.style.color = "var(--clay)";
-    loadingNote.textContent = "See details below. Open your browser console (F12) for more.";
-    log("ERROR: " + msg);
+  } else {
+    camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+    updateMovement(dt);
   }
 
-  window.addEventListener("error", (e) => showError(e.message || String(e.error)));
-  window.addEventListener("unhandledrejection", (e) => showError("unhandled promise rejection: " + (e.reason?.message || e.reason)));
-
-  viewer.addEventListener("progress", (event) => {
-    const pct = Math.round(event.detail.totalProgress * 100);
-    loadbar.style.width = pct + "%";
-    log(`model-viewer progress: ${pct}% (${event.detail.reason || ""})`);
-  });
-  viewer.addEventListener("error", (event) => {
-    showError("model-viewer reported a load error: " + JSON.stringify(event.detail || event));
-  });
-  viewer.addEventListener("load", () => {
-    log("model-viewer 'load' event fired -- scene ready");
-    loadingEl.classList.add("hidden");
-  });
-
-  log("starting model load...");
-  try {
-    // NOT a blob: URL -- this sentinel path is intercepted by the fetch()
-    // patch installed earlier in the page and answered from embedded
-    // memory, since blob: fetches are blocked by this environment's
-    // "connect-src 'self'" CSP (confirmed directly).
-    log(`setting viewer.src = "${window.EMBEDDED_MODEL_URL}" (served locally via fetch() interception)`);
-    viewer.src = window.EMBEDDED_MODEL_URL;
-    log("viewer.src set -- waiting for model-viewer progress/load events");
-  } catch (err) {
-    showError("failed while setting viewer.src: " + err.message);
-  }
-
-  setTimeout(() => {
-    if (!loadingEl.classList.contains("hidden")) {
-      showError("timed out after 25s waiting for model-viewer to finish loading. " +
-        "Possible causes: the Draco decoder worker failed to start (e.g. a CSP " +
-        "restriction on Worker creation), or GLTF/Draco parsing failed silently. " +
-        "Check the console above this log for more detail.");
-    }
-  }, 25000);
-}); // end customElements.whenDefined("model-viewer")
+  updateHotspotScreenPositions();
+  renderer.render(scene, camera);
+}
 </script>

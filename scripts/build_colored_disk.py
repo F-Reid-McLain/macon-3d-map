@@ -98,25 +98,20 @@ def build_colored_tile(tile_name, clip_shape_m):
     plate_mesh, (ox, oy) = bg.build_terrain_base(plate_clip_m)
     xf = lambda g: affine_transform(g, [bg.MM_PER_M, 0, 0, bg.MM_PER_M, -ox * bg.MM_PER_M, -oy * bg.MM_PER_M])
 
-    # ---- build road ribbon + water shape in local mm coords (used for both
-    # cutting AND color classification) ----
+    # ---- build road ribbon in local mm coords, for COLOR CLASSIFICATION ONLY
+    # -- unlike the physical print pipeline (build_grid.py), this web-only
+    # model isn't printed, so roads are NOT grooved/cut into the terrain here;
+    # they render flush with the surrounding surface, just colored grey via
+    # the spatial-classification pass below. Water keeps its physical recess
+    # (still cut, via cut_shapes) since that reads better visually either way. ----
     road_ribbon_parts = []
     cut_shapes = []
     for line_utm in r["geometry"]:
         if line_utm.is_empty or line_utm.length == 0:
             continue
-        tz = bg.terrain_z_mm(line_utm.centroid.x, line_utm.centroid.y)
         line_local = xf(line_utm)
         ribbon = line_local.buffer(bg.ROAD_GROOVE_WIDTH_MM / 2)
         road_ribbon_parts.append(ribbon)
-        parts = ribbon.geoms if isinstance(ribbon, BaseMultipartGeometry) else [ribbon]
-        for part in parts:
-            if part.is_empty or part.area <= 0:
-                continue
-            prism = trimesh.creation.extrude_polygon(part, height=bg.ROAD_GROOVE_DEPTH_MM + 1.0, engine="earcut")
-            prism.apply_translation([0, 0, tz - bg.ROAD_GROOVE_DEPTH_MM])
-            if prism.is_volume:
-                cut_shapes.append(prism)
     road_ribbon = unary_union(road_ribbon_parts) if road_ribbon_parts else None
 
     water_shape_parts = []
