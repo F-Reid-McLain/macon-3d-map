@@ -13,12 +13,18 @@ ribbon / water polygons used to cut it (via shapely.vectorized for speed),
 and colored grey/blue accordingly. This is robust regardless of how the
 boolean operation restructured the mesh topology.
 
-Color scheme: tan general buildings, red hospitals, blue government/public,
-orange Mercer University, greyish roads, lavender-grey parking lots, blue
-water, green terrain.
+Color scheme: red hospitals, blue government/public, orange Mercer
+University, brass named landmarks -- these four take priority regardless of
+zoning. Every other building is colored by its zoning parcel (see
+classify_zoning() / ZONING_CATEGORY_COLORS below): burlywood residential,
+amethyst commercial, slate industrial, olive agricultural, grey other/planned
+development, falling back to the original flat tan only if a building has no
+zoning parcel match at all (~0.4% of parcels have a blank ZONINGCODE). Plus
+greyish roads, lavender-grey parking lots, blue water, green terrain.
 Run from the project root: `python3 scripts/build_colored_disk.py`
 """
 import os
+import re
 import sys
 import numpy as np
 import geopandas as gpd
@@ -44,9 +50,74 @@ COLORS = {
     "landmark": [184, 147, 74, 255],
 }
 
+# Zoning-derived colors, applied ONLY to buildings that are still plain
+# "building_default" after the category pass below -- hospitals/government/
+# Mercer/named landmarks keep their existing distinct colors regardless of
+# zoning, since those are genuinely special-purpose call-outs worth keeping
+# even if e.g. a hospital happens to sit on commercially-zoned land. This
+# turns the ~90%+ of buildings that were previously flat tan into a real
+# residential/commercial/industrial/agricultural breakdown instead of
+# replacing the existing category coloring outright.
+ZONING_CATEGORY_COLORS = {
+    "residential": [222, 184, 135, 255],
+    "commercial": [155, 89, 182, 255],
+    "industrial": [127, 140, 141, 255],
+    "agricultural": [154, 165, 76, 255],
+    "other": [190, 190, 190, 255],
+}
+
+
+def classify_zoning(code):
+    """Bibb County ZONINGCODE -> a simplified category, or None if blank/
+    unrecognized (falls back to the plain building_default tan). Reference:
+    R-1/R-1A/R-1AA/R-1AAA/R-1AAAA/R-2/R-2A/R-3/RR/HR-1/HR-2/HR-3/MHR =
+    residential (density tiers + historic + manufactured-home residential);
+    C-1..C-5/CBD-1/CBD-2/HC/SC = commercial; M-1/M-2/M-3 = industrial;
+    A/AG = agricultural; PDC/PDR/PDI = planned-development commercial/
+    residential/industrial (real, common codes, not edge cases); PDE
+    ("planned development employment", going by context) and HPD/HPD-BH
+    (historic preservation district, an overlay on a base zone, not a use by
+    itself) are genuinely ambiguous -> "other" rather than a guess. Split-
+    zoned parcels ("A/C-2", "C-1,R1A") are classified by whichever code is
+    listed first -- a simplification, not a claim that only part of the
+    parcel matters."""
+    if not code:
+        return None
+    code = str(code).strip().upper()
+    if not code:
+        return None
+    primary = re.split(r"[/,]", code)[0].strip()
+    if primary in ("A", "AG"):
+        return "agricultural"
+    if primary.startswith("R") or primary.startswith("HR") or primary == "MHR":
+        return "residential"
+    if primary == "PDC":
+        return "commercial"
+    if primary == "PDR":
+        return "residential"
+    if primary == "PDI":
+        return "industrial"
+    if primary == "PDE" or primary.startswith("HPD"):
+        return "other"
+    if primary.startswith("C") or primary in ("HC", "SC"):
+        return "commercial"
+    if primary.startswith("M"):
+        return "industrial"
+    return None  # blank, or data-entry junk like '106'/'31206'
+
+
 parking_all = None
 if os.path.exists("data/parking_raw.geojson"):
     parking_all = gpd.read_file("data/parking_raw.geojson").to_crs(bg.UTM_CRS)
+
+zoning_all = None
+if os.path.exists("data/parcels_zoning.geojson"):
+    zoning_all = gpd.read_file("data/parcels_zoning.geojson").to_crs(bg.UTM_CRS)
+    zoning_all["geometry"] = zoning_all["geometry"].buffer(0)  # fix any invalid parcel rings
+    zoning_all["zoning_cat"] = zoning_all["ZONINGCODE"].apply(classify_zoning)
+    n_classified = zoning_all["zoning_cat"].notna().sum()
+    print(f"loaded {len(zoning_all)} zoning parcels, {n_classified} classified "
+          f"({100 * n_classified / len(zoning_all):.1f}%)")
 
 # named buildings that also get a hotspot in site/assemble.py's "landmark"
 # category -- colored brass to match that hotspot/legend color, instead of
@@ -75,6 +146,28 @@ def build_colored_tile(tile_name, clip_shape_m):
     b = b[~b["geometry"].is_empty]
     b["category"] = b["btype"].apply(categorize)
     b.loc[b["name"].isin(LANDMARK_BUILDING_NAMES), "category"] = "landmark"
+
+    b["zoning_cat"] = None
+    if zoning_all is not None and len(b):
+        # reset_index(drop=True) on BOTH sides is load-bearing, not cosmetic: b and
+        # zoning_all each keep their original row indices from the full county-wide
+        # dataframes after the .intersects() filter above, which routinely collide
+        # (e.g. both have a row "42"). gpd.sjoin doesn't fully guard against that --
+        # confirmed by debugging a real tile where match rate silently dropped from
+        # ~99% to ~6% with colliding indices, no error, just wrong results joined
+        # back onto the wrong buildings. Using an explicit "b_idx" position column
+        # (not pandas index alignment) to map results back removes the ambiguity
+        # entirely instead of trusting index alignment a second time.
+        zn = zoning_all[zoning_all.intersects(clip_shape_m)][["geometry", "zoning_cat"]].reset_index(drop=True)
+        if len(zn):
+            b_reset = b.reset_index(drop=True)
+            b_pts = gpd.GeoDataFrame({"b_idx": b_reset.index}, geometry=b_reset.geometry.centroid,
+                                      crs=bg.UTM_CRS)
+            joined = gpd.sjoin(b_pts, zn, predicate="within", how="left")
+            # a centroid can land inside >1 overlapping/sliver parcel; keep one match per building
+            joined = joined.drop_duplicates(subset="b_idx", keep="first")
+            zoning_by_pos = joined.set_index("b_idx")["zoning_cat"].reindex(b_reset.index)
+            b["zoning_cat"] = zoning_by_pos.to_numpy()
 
     r = bg.roads_all[bg.roads_all.intersects(clip_shape_m)].copy()
     r["geometry"] = r["geometry"].intersection(clip_shape_m)
@@ -223,7 +316,10 @@ def build_colored_tile(tile_name, clip_shape_m):
         geom = xf(geom_utm)
         polys = geom.geoms if isinstance(geom, BaseMultipartGeometry) else [geom]
         h_mm = max(row["height_m"] * bg.METERS_TO_MM, bg.MIN_BUILDING_HEIGHT_MM)
-        color = COLORS[row["category"]]
+        if row["category"] == "building_default" and row["zoning_cat"] in ZONING_CATEGORY_COLORS:
+            color = ZONING_CATEGORY_COLORS[row["zoning_cat"]]
+        else:
+            color = COLORS[row["category"]]
         for poly in polys:
             if not isinstance(poly, Polygon) or poly.area <= 0 or not poly.is_valid:
                 continue
