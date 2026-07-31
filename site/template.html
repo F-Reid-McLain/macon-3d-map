@@ -417,16 +417,49 @@
   </aside>
 </div>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "data:text/javascript;base64,__THREE_MODULE_B64__",
-    "three/addons/utils/BufferGeometryUtils.js": "data:text/javascript;base64,__BUFFER_GEOMETRY_UTILS_B64__",
-    "three/addons/loaders/GLTFLoader.js": "data:text/javascript;base64,__GLTF_LOADER_B64__",
-    "three/addons/loaders/DRACOLoader.js": "data:text/javascript;base64,__DRACO_LOADER_B64__",
-    "three-mesh-bvh": "data:text/javascript;base64,__THREE_MESH_BVH_B64__"
-  }
-}
+<script>
+  // Import maps resolving to data: URIs are blocked by this environment's CSP
+  // -- confirmed directly via console output: script-src here is "'self'
+  // 'unsafe-inline' 'unsafe-eval' blob:", which allows blob: for scripts but
+  // NOT data:. Build the import map from blob: URLs instead, decoded at
+  // runtime from the same embedded base64 payloads (blob: is fine for
+  // *loading a script*, even though connect-src separately blocks fetch()
+  // on blob: URLs -- that's why the model itself and the Draco decoder still
+  // need the fetch-interception trick below instead of this approach; script
+  // loading and fetch() are governed by different CSP directives).
+  //
+  // This MUST be a synchronous classic <script> (not type="module", no
+  // async/defer) so it runs and finishes -- with the import map it injects
+  // already in the DOM -- before the HTML parser reaches the later
+  // <script type="module"> that actually does `import ... from "three"`.
+  // Import map registration has to happen before any module script that
+  // needs it is evaluated.
+  (function () {
+    function b64ToBlobUrl(b64, mime) {
+      const chunkSize = 1024 * 1024;
+      const parts = [];
+      for (let offset = 0; offset < b64.length; offset += chunkSize) {
+        const bin = atob(b64.slice(offset, offset + chunkSize));
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        parts.push(arr);
+      }
+      return URL.createObjectURL(new Blob(parts, { type: mime }));
+    }
+    const importMap = {
+      imports: {
+        "three": b64ToBlobUrl("__THREE_MODULE_B64__", "text/javascript"),
+        "three/addons/utils/BufferGeometryUtils.js": b64ToBlobUrl("__BUFFER_GEOMETRY_UTILS_B64__", "text/javascript"),
+        "three/addons/loaders/GLTFLoader.js": b64ToBlobUrl("__GLTF_LOADER_B64__", "text/javascript"),
+        "three/addons/loaders/DRACOLoader.js": b64ToBlobUrl("__DRACO_LOADER_B64__", "text/javascript"),
+        "three-mesh-bvh": b64ToBlobUrl("__THREE_MESH_BVH_B64__", "text/javascript"),
+      },
+    };
+    const mapScript = document.createElement("script");
+    mapScript.type = "importmap";
+    mapScript.textContent = JSON.stringify(importMap);
+    document.currentScript.insertAdjacentElement("afterend", mapScript);
+  })();
 </script>
 <script>
   // Intercept fetch() calls for the Draco decoder files that DRACOLoader
