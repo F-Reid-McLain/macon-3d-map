@@ -100,6 +100,18 @@ CATEGORIES = [
 DECAL_HEIGHT_MM = 0.12
 DECAL_LIFT_MM = 0.03  # clears the decal off the terrain surface it sits on -- avoids z-fighting
 
+# Roads get a bigger lift than other decals: measured directly (sampling
+# thousands of road vertices and raycasting straight down against the
+# rendered terrain mesh) that DECAL_LIFT_MM alone left ~21% of the road
+# BELOW the terrain surface, down to -0.32mm at the worst points. Cause:
+# the terrain MESH is a triangulated grid (each DEM cell split by one
+# diagonal into two flat triangles), but terrain_z_mm_batch samples true
+# bilinear interpolation -- the two don't exactly agree at sub-cell
+# precision, and 0.03mm is nowhere near enough margin to cover that noise
+# for a shape as large/varied as the whole road network. 0.45mm comfortably
+# clears the measured worst case with headroom.
+ROAD_DECAL_LIFT_MM = 0.45
+
 # Real-world road widths (meters) by OSM class, used for the road decal --
 # was a single flat 3.0mm (37.5 real meters!) for every road regardless of
 # class, which read as one giant blobby mass. Combined with flat caps/mitre
@@ -322,7 +334,7 @@ def build_colored_tile(tile_name, clip_shape_m):
             if cluster_utm.is_empty or cluster_utm.area <= 0:
                 continue
             try:
-                decal = drape_polygon_mesh(cluster_utm, ox, oy, DECAL_LIFT_MM, COLORS["road"])
+                decal = drape_polygon_mesh(cluster_utm, ox, oy, ROAD_DECAL_LIFT_MM, COLORS["road"])
             except Exception:
                 continue
             if decal is not None:
