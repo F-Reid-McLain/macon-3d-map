@@ -58,7 +58,15 @@ ROAD_GROOVE_DEPTH_MM = 0.3
 WATER_RECESS_MM = 0.4
 PLATE_MARGIN_M = 15.0
 MIN_TILE_CONTENT_M2 = 2000.0
-DEM_SAMPLE_SPACING_M = 20.0
+DEM_SAMPLE_SPACING_M = 20.0   # tried halving this to 10m for sharper road/parking-lot color
+                               # classification -- reverted. Across the WHOLE COUNTY (unlike a
+                               # dense downtown test tile, which is ~44% terrain) terrain turns
+                               # out to be ~78% of total geometry, so quadrupling terrain
+                               # resolution roughly tripled the ENTIRE model (8.6M -> 28.7M
+                               # faces, raw GLB 175MB -> 577MB) and Draco's WASM encoder hit a
+                               # hard memory ceiling and aborted outright, not just ran slow.
+                               # See build_colored_disk.py's parking-lot fallback for how small
+                               # features got handled without needing more geometry at all.
 
 UTM_CRS = "EPSG:32617"
 OUT_DIR = "output/grid"

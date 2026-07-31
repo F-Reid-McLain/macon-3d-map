@@ -108,16 +108,21 @@ def build_colored_tile(tile_name, clip_shape_m):
     # Width is NOT bg.ROAD_GROOVE_WIDTH_MM (0.9mm, half-width 0.45mm) -- that's
     # sized for a physical print groove, not for this face-centroid color
     # classification. Classification tests each terrain triangle's CENTROID
-    # against the ribbon (see face_colors below), and the terrain grid itself
-    # has ~20m cells (bg.DEM_SAMPLE_SPACING_M) -> ~1.6mm at this 1:12,500
-    # scale -- a ribbon narrower than a terrain cell mostly threads between
-    # centroids without ever containing one, so roads came out as sparse,
-    # broken flecks instead of a continuous line (confirmed visually before
-    # this fix). ROAD_PAINT_WIDTH_MM is comfortably wider than a terrain
-    # cell's ~2.3mm diagonal so a road can't cross a cell without catching its
-    # centroid, while still reading as a reasonably narrow line at this scale
-    # (water lines already use a visually-similar 3mm width and look fine).
-    ROAD_PAINT_WIDTH_MM = 3.0
+    # against the ribbon (see face_colors below), and the terrain grid cell
+    # size (bg.DEM_SAMPLE_SPACING_M) sets a hard floor: a ribbon narrower than
+    # a cell mostly threads between centroids without ever containing one, so
+    # roads came out as sparse, broken flecks instead of a continuous line
+    # (confirmed visually). Too wide overshoots just as visibly the other way
+    # -- 3.0mm fixed the brokenness at the original 20m grid, but a since-
+    # reverted experiment at a 10m grid (see build_grid.py) showed that same
+    # 3.0mm was now ~2x wider than needed and read as fat/blobby (road-
+    # classified face share jumped from 24% to 41% of a test tile with no
+    # proportional change in real road area). Computed from
+    # bg.DEM_SAMPLE_SPACING_M instead of a hardcoded constant so it can't need
+    # manual retuning again if that value ever changes -- 0.15x the spacing in
+    # mm empirically matched both the 20m case (3.0mm) and the 10m case
+    # (1.5mm) exactly.
+    ROAD_PAINT_WIDTH_MM = 0.15 * bg.DEM_SAMPLE_SPACING_M
     road_ribbon_parts = []
     cut_shapes = []
     for line_utm in r["geometry"]:
@@ -179,6 +184,30 @@ def build_colored_tile(tile_name, clip_shape_m):
     if parking_shape is not None and not parking_shape.is_empty:
         mask = shapely.vectorized.contains(parking_shape, centers[:, 0], centers[:, 1])
         face_colors[mask] = COLORS["parking"]
+        # guaranteed-visibility fallback: classification only fires when a terrain
+        # triangle's CENTROID falls inside the lot, so a lot smaller than roughly a
+        # terrain cell (still ~13/283 county-wide even after the 10m regrade above --
+        # real parking lots range down to ~30m^2) can land entirely between centroids
+        # and get zero coverage, just silently vanishing. Force-color each such lot's
+        # single nearest terrain face instead of leaving it uncolored -- not a
+        # geometrically exact footprint, but visible, which a blank spot never is.
+        from scipy.spatial import cKDTree
+        tree = cKDTree(centers[:, :2])
+        n_fallback = 0
+        for poly in parking_shape_parts:
+            parts = poly.geoms if isinstance(poly, BaseMultipartGeometry) else [poly]
+            for part in parts:
+                if part.is_empty or part.area <= 0:
+                    continue
+                if shapely.vectorized.contains(part, centers[:, 0], centers[:, 1]).any():
+                    continue
+                c = part.centroid
+                _, idx = tree.query([c.x, c.y])
+                face_colors[idx] = COLORS["parking"]
+                n_fallback += 1
+        if n_fallback:
+            print(f"  [{tile_name}] {n_fallback} parking lot(s) too small to hit a terrain "
+                  f"centroid, force-colored via nearest-face fallback")
     if road_ribbon is not None and not road_ribbon.is_empty:
         mask = shapely.vectorized.contains(road_ribbon, centers[:, 0], centers[:, 1])
         face_colors[mask] = COLORS["road"]
