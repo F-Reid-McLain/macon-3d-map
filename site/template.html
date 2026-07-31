@@ -156,11 +156,6 @@
     gap: 0.55rem;
     padding: 0.3rem 0;
     font-size: 0.82rem;
-    cursor: pointer;
-    user-select: none;
-  }
-  .legend-row.no-toggle {
-    cursor: default;
   }
   .legend-row input[type="checkbox"] {
     flex: none;
@@ -176,12 +171,42 @@
   .legend-row.hidden-category .swatch {
     opacity: 0.3;
   }
+  .legend-label {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    gap: 0.55rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .legend-label.no-toggle {
+    cursor: default;
+  }
+  /* .swatch is a <button> reset to look like the plain colored square it
+     always was -- but for building categories it's ALSO independently
+     clickable (see buildLegend()'s highlightable rows) to grey out just
+     that category's color without hiding it, so it needs its own hit
+     target separate from the visibility checkbox/label. */
   .swatch {
     width: 0.85rem;
     height: 0.85rem;
     border-radius: 2px;
     flex: none;
     border: 1px solid rgba(0,0,0,0.25);
+    padding: 0;
+    background-clip: padding-box;
+  }
+  button.swatch {
+    cursor: pointer;
+  }
+  button.swatch:hover {
+    outline: 2px solid var(--brass-bright);
+    outline-offset: 1px;
+  }
+  button.swatch.unhighlighted {
+    opacity: 0.55;
+    outline: 2px solid var(--brass-bright);
+    outline-offset: 1px;
   }
   .legend-count {
     margin-left: auto;
@@ -563,18 +588,18 @@ const CATEGORY_COLOR = {
 // plane isn't useful, so it's listed but not made interactive.
 const LEGEND_SECTIONS = [
   { rows: [
-    { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital" },
-    { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government" },
-    { node: "mercer", label: "Mercer University", color: "#f28c28", countId: "count-mercer" },
-    { node: "landmark", label: "Other named landmarks", color: "#b8934a", countId: "count-landmark" },
+    { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital", building: true },
+    { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government", building: true },
+    { node: "mercer", label: "Mercer University", color: "#f28c28", countId: "count-mercer", building: true },
+    { node: "landmark", label: "Other named landmarks", color: "#b8934a", countId: "count-landmark", building: true },
   ] },
   { heading: "Other buildings, by zoning", rows: [
-    { node: "residential", label: "Residential", color: "#deb887" },
-    { node: "commercial", label: "Commercial", color: "#9b59b6" },
-    { node: "industrial", label: "Industrial", color: "#7f8c8d" },
-    { node: "agricultural", label: "Agricultural", color: "#9aa54c" },
-    { node: "other", label: "Other / planned development", color: "#bebebe" },
-    { node: "unclassified", label: "Unclassified", color: "#d2b48c" },
+    { node: "residential", label: "Residential", color: "#deb887", building: true },
+    { node: "commercial", label: "Commercial", color: "#9b59b6", building: true },
+    { node: "industrial", label: "Industrial", color: "#7f8c8d", building: true },
+    { node: "agricultural", label: "Agricultural", color: "#9aa54c", building: true },
+    { node: "other", label: "Other / planned development", color: "#bebebe", building: true },
+    { node: "unclassified", label: "Unclassified", color: "#d2b48c", building: true },
   ] },
   { heading: "Other features", rows: [
     { node: "road", label: "Roads", color: "#787878" },
@@ -583,6 +608,17 @@ const LEGEND_SECTIONS = [
     { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true },
   ] },
 ];
+
+// buildings are colored via per-vertex COLOR_0 data (each face's real
+// category/zoning color); "un-highlighting" one just flips its material's
+// vertexColors flag off and sets a flat neutral grey instead -- cheap, and
+// reversible without touching the underlying geometry/attribute data at all.
+const UNHIGHLIGHT_COLOR = 0x9a9a9a;
+function setMeshHighlighted(mesh, highlighted) {
+  mesh.material.vertexColors = highlighted;
+  mesh.material.color.set(highlighted ? 0xffffff : UNHIGHLIGHT_COLOR);
+  mesh.material.needsUpdate = true; // vertexColors affects shader compilation, not just a uniform
+}
 
 const container = document.getElementById("viewer-container");
 const landmarkGroupsEl = document.getElementById("landmark-groups");
@@ -799,6 +835,41 @@ function buildHotspots() {
 // test build) gets a disabled, dimmed row instead of a broken toggle. ----
 function buildLegend(categoryMeshes) {
   const rowsEl = document.getElementById("legend-rows");
+  let rowId = 0;
+  const buildingSwatches = []; // {button, mesh} -- for the "un-highlight all" convenience link
+
+  // "Un-highlight all buildings" convenience link -- every individual
+  // building swatch below does the same thing per-category (click to grey
+  // it out without hiding it); this just applies it to all of them at once,
+  // and its own text flips between the two actions depending on whether
+  // every building category is currently highlighted, unhighlighted, or a
+  // mix (mixed counts as "not all unhighlighted", so the first click always
+  // un-highlights everything rather than acting unpredictably).
+  const highlightToggleLink = document.createElement("a");
+  highlightToggleLink.href = "#";
+  highlightToggleLink.className = "mono";
+  highlightToggleLink.style.color = "var(--brass-bright)";
+  highlightToggleLink.style.display = "inline-block";
+  highlightToggleLink.style.margin = "0 0 0.75rem";
+  highlightToggleLink.style.fontSize = "0.78rem";
+  function refreshHighlightLinkText() {
+    const allUnhighlighted = buildingSwatches.length > 0 &&
+      buildingSwatches.every(({ mesh }) => !mesh.material.vertexColors);
+    highlightToggleLink.textContent = allUnhighlighted
+      ? "restore building colors"
+      : "un-highlight all buildings";
+  }
+  highlightToggleLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    const allUnhighlighted = buildingSwatches.every(({ mesh }) => !mesh.material.vertexColors);
+    const makeHighlighted = allUnhighlighted; // currently all grey -> restore; otherwise -> grey all
+    for (const { button, mesh } of buildingSwatches) {
+      setMeshHighlighted(mesh, makeHighlighted);
+      button.classList.toggle("unhighlighted", !makeHighlighted);
+    }
+    refreshHighlightLinkText();
+  });
+  rowsEl.appendChild(highlightToggleLink);
 
   for (const section of LEGEND_SECTIONS) {
     if (section.heading) {
@@ -809,41 +880,62 @@ function buildLegend(categoryMeshes) {
       rowsEl.appendChild(p);
     }
     for (const row of section.rows) {
-      const label = document.createElement("label");
-      label.className = "legend-row" + (row.noToggle ? " no-toggle" : "");
+      const id = "vis-" + (rowId++);
+      const rowEl = document.createElement("div");
+      rowEl.className = "legend-row" + (row.noToggle ? "" : "");
       const countSpan = row.countId ? `<span class="legend-count mono" id="${row.countId}"></span>` : "";
+      const mesh = row.noToggle ? null : categoryMeshes[row.node];
+
       if (row.noToggle) {
-        label.innerHTML = `<span class="swatch" style="background:${row.color}"></span>${row.label}${countSpan}`;
+        rowEl.innerHTML = `<span class="swatch" style="background:${row.color}"></span>` +
+          `<span class="legend-label no-toggle">${row.label}${countSpan}</span>`;
       } else {
-        label.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:${row.color}"></span>${row.label}${countSpan}`;
-        const checkbox = label.querySelector("input");
-        const mesh = categoryMeshes[row.node];
+        const swatchTag = row.building && mesh ? "button" : "span";
+        const swatchAttrs = row.building && mesh ? `type="button" title="Click to un-highlight (grey out) this category"` : "";
+        rowEl.innerHTML =
+          `<input type="checkbox" id="${id}" checked>` +
+          `<${swatchTag} class="swatch" style="background:${row.color}" ${swatchAttrs}></${swatchTag}>` +
+          `<label for="${id}" class="legend-label">${row.label}${countSpan}</label>`;
+        const checkbox = rowEl.querySelector("input");
+        const swatch = rowEl.querySelector(".swatch");
         if (!mesh) {
           checkbox.disabled = true;
           checkbox.checked = false;
-          label.classList.add("hidden-category", "no-toggle");
-          label.title = "Nothing in this category in the current model";
+          rowEl.classList.add("hidden-category");
+          rowEl.querySelector(".legend-label").classList.add("no-toggle");
+          rowEl.title = "Nothing in this category in the current model";
         } else {
           checkbox.addEventListener("change", () => {
             mesh.visible = checkbox.checked;
-            label.classList.toggle("hidden-category", !checkbox.checked);
+            rowEl.classList.toggle("hidden-category", !checkbox.checked);
           });
+          if (row.building) {
+            buildingSwatches.push({ button: swatch, mesh });
+            swatch.addEventListener("click", () => {
+              const makeHighlighted = !mesh.material.vertexColors; // currently grey -> restore color, and vice versa
+              setMeshHighlighted(mesh, makeHighlighted);
+              swatch.classList.toggle("unhighlighted", !makeHighlighted);
+              refreshHighlightLinkText();
+            });
+          }
         }
       }
-      rowsEl.appendChild(label);
+      rowsEl.appendChild(rowEl);
     }
   }
+  refreshHighlightLinkText();
 
   // place labels aren't a mesh -- they're the DOM elements built by
   // buildPlaceLabels() -- so their toggle just flips a flag that
   // updatePlaceLabelPositions() checks every frame, instead of touching a mesh.
-  const placeLabel = document.createElement("label");
-  placeLabel.className = "legend-row";
-  placeLabel.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:var(--brass)"></span>Place labels`;
-  placeLabel.querySelector("input").addEventListener("change", (e) => {
+  const placeId = "vis-" + (rowId++);
+  const placeRow = document.createElement("div");
+  placeRow.className = "legend-row";
+  placeRow.innerHTML = `<input type="checkbox" id="${placeId}" checked><span class="swatch" style="background:var(--brass)"></span><label for="${placeId}" class="legend-label">Place labels</label>`;
+  placeRow.querySelector("input").addEventListener("change", (e) => {
     placeLabelsVisible = e.target.checked;
   });
-  rowsEl.appendChild(placeLabel);
+  rowsEl.appendChild(placeRow);
 
   const desc = document.createElement("p");
   desc.className = "desc";
