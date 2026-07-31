@@ -1,26 +1,34 @@
-"""Export a color-coded version of the FULL 21-tile disk (terrain + roads +
-water + buildings, matching the real print geometry) as one combined PLY +
-GLB. Plain STL has no color support; 3MF export via trimesh doesn't reliably
-preserve color in this environment (verified via round-trip test), so PLY
-(most universal for viewers) and GLB (modern, well supported, verified
-working) are used instead.
+"""Export a color-coded version of the full county model as ONE multi-node
+GLB (a trimesh.Scene with named geometries), so each legend category can be
+independently shown/hidden in the browser -- see site/template.html's legend
+toggle checkboxes, which match mesh objects by these exact node names.
 
-Road/water coloring approach: boolean-cutting grooves/recesses into the
-terrain mesh doesn't preserve a "this face is a road" tag through the
-operation, so roads and water are colored by SPATIAL CLASSIFICATION after
-the cut -- each terrain face's centroid is tested against the same road
-ribbon / water polygons used to cut it (via shapely.vectorized for speed),
-and colored grey/blue accordingly. This is robust regardless of how the
-boolean operation restructured the mesh topology.
+Buildings are naturally separable (each is its own extruded polygon before
+concatenation), so they're grouped by category and concatenated per-category
+instead of all together. Terrain/roads/water/parking are NOT naturally
+separable this way -- they used to be colored via spatial classification of
+a single continuous terrain mesh's face centroids (testing each face against
+the road/water/parking polygons), which baked all four into one blob with no
+way to toggle just "roads" independently. Replaced with a decal approach:
+terrain is now a single uniformly-green mesh, and roads/water/parking are
+each a separate thin colored prism (~0.12mm) extruded directly from their
+own real polygon shape and lifted ~0.03mm above (or, for water, resting at
+the bottom of its recess) the terrain surface -- clearly on top, no
+z-fighting, and each one is its own node, hence toggleable. This also
+incidentally eliminates the old "parking lot too small to hit a terrain
+face centroid" fallback hack entirely: a decal is extruded straight from the
+lot's own polygon, so there's no terrain-grid-resolution dependency to fall
+short of in the first place.
 
 Color scheme: red hospitals, blue government/public, orange Mercer
 University, brass named landmarks -- these four take priority regardless of
 zoning. Every other building is colored by its zoning parcel (see
 classify_zoning() / ZONING_CATEGORY_COLORS below): burlywood residential,
 amethyst commercial, slate industrial, olive agricultural, grey other/planned
-development, falling back to the original flat tan only if a building has no
-zoning parcel match at all (~0.4% of parcels have a blank ZONINGCODE). Plus
-greyish roads, lavender-grey parking lots, blue water, green terrain.
+development, falling back to the original flat tan ("unclassified") only if
+a building has no zoning parcel match at all (~0.4% of parcels have a blank
+ZONINGCODE). Plus greyish roads, lavender-grey parking lots, blue water,
+green terrain.
 Run from the project root: `python3 scripts/build_colored_disk.py`
 """
 import os
@@ -29,7 +37,6 @@ import sys
 import numpy as np
 import geopandas as gpd
 import trimesh
-import shapely.vectorized
 from shapely.geometry import Polygon, box
 from shapely.affinity import affine_transform
 from shapely.geometry.base import BaseMultipartGeometry
@@ -65,6 +72,19 @@ ZONING_CATEGORY_COLORS = {
     "agricultural": [154, 165, 76, 255],
     "other": [190, 190, 190, 255],
 }
+
+# Every node name that ends up in the exported Scene, in legend order -- also
+# the exact set of names site/template.html looks for when wiring up toggle
+# checkboxes. "terrain" is deliberately NOT toggleable in the UI (hiding the
+# ground plane isn't useful), but it's still its own node for consistency.
+CATEGORIES = [
+    "terrain", "water", "road", "parking",
+    "hospital", "government", "mercer", "landmark",
+    "residential", "commercial", "industrial", "agricultural", "other", "unclassified",
+]
+
+DECAL_HEIGHT_MM = 0.12
+DECAL_LIFT_MM = 0.03  # clears the decal off the terrain surface it sits on -- avoids z-fighting
 
 
 def classify_zoning(code):
@@ -140,7 +160,28 @@ def categorize(btype):
     return "building_default"
 
 
+def effective_category(category, zoning_cat):
+    """Collapses a building's (category, zoning_cat) pair down to one of
+    CATEGORIES -- the node it gets concatenated into."""
+    if category != "building_default":
+        return category  # hospital / government / mercer / landmark
+    if zoning_cat in ZONING_CATEGORY_COLORS:
+        return zoning_cat  # residential / commercial / industrial / agricultural / other
+    return "unclassified"
+
+
+def category_color(cat):
+    if cat in ZONING_CATEGORY_COLORS:
+        return ZONING_CATEGORY_COLORS[cat]
+    if cat == "unclassified":
+        return COLORS["building_default"]
+    return COLORS[cat]
+
+
 def build_colored_tile(tile_name, clip_shape_m):
+    """Returns {category_name: mesh} for whichever categories have any
+    geometry in this tile (categories with nothing here are simply absent
+    from the dict), already translated to this tile's true global position."""
     b = bg.buildings_all[bg.buildings_all.intersects(clip_shape_m)].copy()
     b["geometry"] = b["geometry"].intersection(clip_shape_m)
     b = b[~b["geometry"].is_empty]
@@ -187,46 +228,54 @@ def build_colored_tile(tile_name, clip_shape_m):
     if len(b) == 0 and len(r) == 0 and (pk is None or len(pk) == 0):
         return None
 
+    result = {cat: [] for cat in CATEGORIES}
+
     plate_clip_m = clip_shape_m.buffer(bg.PLATE_MARGIN_M)
     plate_mesh, (ox, oy) = bg.build_terrain_base(plate_clip_m)
     xf = lambda g: affine_transform(g, [bg.MM_PER_M, 0, 0, bg.MM_PER_M, -ox * bg.MM_PER_M, -oy * bg.MM_PER_M])
 
-    # ---- build road ribbon in local mm coords, for COLOR CLASSIFICATION ONLY
-    # -- unlike the physical print pipeline (build_grid.py), this web-only
-    # model isn't printed, so roads are NOT grooved/cut into the terrain here;
-    # they render flush with the surrounding surface, just colored grey via
-    # the spatial-classification pass below. Water keeps its physical recess
-    # (still cut, via cut_shapes) since that reads better visually either way. ----
+    # ---- roads: thin decal prisms extruded from the road network's own
+    # shape (not spatial classification against terrain faces). Width is a
+    # real paint-stroke width now, not tuned around terrain grid cell size
+    # like the old classification approach needed.
     #
-    # Width is NOT bg.ROAD_GROOVE_WIDTH_MM (0.9mm, half-width 0.45mm) -- that's
-    # sized for a physical print groove, not for this face-centroid color
-    # classification. Classification tests each terrain triangle's CENTROID
-    # against the ribbon (see face_colors below), and the terrain grid cell
-    # size (bg.DEM_SAMPLE_SPACING_M) sets a hard floor: a ribbon narrower than
-    # a cell mostly threads between centroids without ever containing one, so
-    # roads came out as sparse, broken flecks instead of a continuous line
-    # (confirmed visually). Too wide overshoots just as visibly the other way
-    # -- 3.0mm fixed the brokenness at the original 20m grid, but a since-
-    # reverted experiment at a 10m grid (see build_grid.py) showed that same
-    # 3.0mm was now ~2x wider than needed and read as fat/blobby (road-
-    # classified face share jumped from 24% to 41% of a test tile with no
-    # proportional change in real road area). Computed from
-    # bg.DEM_SAMPLE_SPACING_M instead of a hardcoded constant so it can't need
-    # manual retuning again if that value ever changes -- 0.15x the spacing in
-    # mm empirically matched both the 20m case (3.0mm) and the 10m case
-    # (1.5mm) exactly.
-    ROAD_PAINT_WIDTH_MM = 0.15 * bg.DEM_SAMPLE_SPACING_M
-    road_ribbon_parts = []
-    cut_shapes = []
-    for line_utm in r["geometry"]:
-        if line_utm.is_empty or line_utm.length == 0:
-            continue
-        line_local = xf(line_utm)
-        ribbon = line_local.buffer(ROAD_PAINT_WIDTH_MM / 2)
-        road_ribbon_parts.append(ribbon)
-    road_ribbon = unary_union(road_ribbon_parts) if road_ribbon_parts else None
+    # UNION the ribbons in UTM space FIRST, before extruding -- extruding
+    # each individual road segment's ribbon separately (as a first pass did)
+    # measured 1.08M faces for just 3 tiles' worth of roads, more than the
+    # ENTIRE terrain mesh for the same area, because adjacent/crossing
+    # streets' buffered ribbons overlap heavily at every intersection and
+    # each tiny segment pays the fixed top+bottom+wall-triangle overhead of
+    # its own separate extrude_polygon() call. Unioning first collapses all
+    # that overlap into one clean shape (or a few disjoint clusters) and
+    # extrudes each ONCE. Height is sampled per resulting disjoint cluster's
+    # own centroid (not one height for the whole tile), so hilly terrain
+    # still gets reasonable per-area accuracy despite the merge. ----
+    ROAD_PAINT_WIDTH_MM = 3.0
+    road_width_m = ROAD_PAINT_WIDTH_MM / bg.MM_PER_M
+    road_ribbons_utm = [line_utm.buffer(road_width_m / 2) for line_utm in r["geometry"]
+                         if not line_utm.is_empty and line_utm.length > 0]
+    road_union_utm = unary_union(road_ribbons_utm) if road_ribbons_utm else None
+    if road_union_utm is not None and not road_union_utm.is_empty:
+        clusters = road_union_utm.geoms if isinstance(road_union_utm, BaseMultipartGeometry) else [road_union_utm]
+        for cluster_utm in clusters:
+            if cluster_utm.is_empty or cluster_utm.area <= 0:
+                continue
+            tz = bg.terrain_z_mm(cluster_utm.centroid.x, cluster_utm.centroid.y)
+            part_local = xf(cluster_utm)
+            try:
+                decal = trimesh.creation.extrude_polygon(part_local, height=DECAL_HEIGHT_MM, engine="earcut")
+            except Exception:
+                continue
+            decal.apply_translation([0, 0, tz + DECAL_LIFT_MM])
+            decal.visual.face_colors = COLORS["road"]
+            result["road"].append(decal)
 
-    water_shape_parts = []
+    # ---- water: keep the real geometric recess cut into the terrain (a
+    # genuine depression looks better than a flat decal alone), but color it
+    # via a separate decal resting at the bottom of that recess instead of
+    # spatial-classifying terrain faces, so it's still its own toggleable
+    # node. ----
+    cut_shapes = []
     for _, row in wat.iterrows():
         geom_utm = row["geometry"]
         tz = bg.terrain_z_mm(geom_utm.centroid.x, geom_utm.centroid.y) if not geom_utm.is_empty else bg.BASE_THICKNESS_MM
@@ -235,28 +284,47 @@ def build_colored_tile(tile_name, clip_shape_m):
             geom_local = geom_local.buffer(3.0)
         if geom_local.is_empty:
             continue
-        water_shape_parts.append(geom_local)
         parts = geom_local.geoms if isinstance(geom_local, BaseMultipartGeometry) else [geom_local]
         for part in parts:
             if part.is_empty or part.area <= 0:
                 continue
-            prism = trimesh.creation.extrude_polygon(part, height=bg.WATER_RECESS_MM + 1.0, engine="earcut")
-            prism.apply_translation([0, 0, tz - bg.WATER_RECESS_MM])
-            if prism.is_volume:
-                cut_shapes.append(prism)
-    water_shape = unary_union(water_shape_parts) if water_shape_parts else None
+            try:
+                cut_prism = trimesh.creation.extrude_polygon(part, height=bg.WATER_RECESS_MM + 1.0, engine="earcut")
+            except Exception:
+                continue
+            cut_prism.apply_translation([0, 0, tz - bg.WATER_RECESS_MM])
+            if cut_prism.is_volume:
+                cut_shapes.append(cut_prism)
+            try:
+                decal = trimesh.creation.extrude_polygon(part, height=DECAL_HEIGHT_MM, engine="earcut")
+            except Exception:
+                continue
+            decal.apply_translation([0, 0, tz - bg.WATER_RECESS_MM + DECAL_LIFT_MM])
+            decal.visual.face_colors = COLORS["water"]
+            result["water"].append(decal)
 
-    # parking lots: flush pavement at grade (no groove cut, unlike roads/water)
-    # -- just a separate spatial classification tag so they read as a distinct
-    # surface from roads instead of blending into the grey road ribbons.
-    parking_shape_parts = []
+    # ---- parking lots: flush decal at grade, straight from each lot's own
+    # polygon -- no groove cut (matches roads), and no small-lot fallback
+    # needed anymore since a decal always exists regardless of lot size. ----
     if pk is not None and len(pk):
         for geom_utm in pk["geometry"]:
+            if geom_utm.is_empty:
+                continue
+            tz = bg.terrain_z_mm(geom_utm.centroid.x, geom_utm.centroid.y)
             geom_local = xf(geom_utm)
             if geom_local.is_empty:
                 continue
-            parking_shape_parts.append(geom_local)
-    parking_shape = unary_union(parking_shape_parts) if parking_shape_parts else None
+            parts = geom_local.geoms if isinstance(geom_local, BaseMultipartGeometry) else [geom_local]
+            for part in parts:
+                if part.is_empty or part.area <= 0:
+                    continue
+                try:
+                    decal = trimesh.creation.extrude_polygon(part, height=DECAL_HEIGHT_MM, engine="earcut")
+                except Exception:
+                    continue
+                decal.apply_translation([0, 0, tz + DECAL_LIFT_MM])
+                decal.visual.face_colors = COLORS["parking"]
+                result["parking"].append(decal)
 
     if cut_shapes and plate_mesh.is_volume:
         plate_mesh.merge_vertices()
@@ -269,57 +337,19 @@ def build_colored_tile(tile_name, clip_shape_m):
             try:
                 plate_mesh = trimesh.boolean.difference([plate_mesh] + good, engine="manifold")
             except Exception as e:
-                print(f"  [{tile_name}] road/water cut failed, terrain stays uncut: {e}")
+                print(f"  [{tile_name}] water recess cut failed, terrain stays uncut: {e}")
 
-    # ---- spatial classification for face color (robust to boolean topology changes) ----
-    face_colors = np.tile(COLORS["terrain"], (len(plate_mesh.faces), 1)).astype(np.uint8)
-    centers = plate_mesh.triangles_center
-    if parking_shape is not None and not parking_shape.is_empty:
-        mask = shapely.vectorized.contains(parking_shape, centers[:, 0], centers[:, 1])
-        face_colors[mask] = COLORS["parking"]
-        # guaranteed-visibility fallback: classification only fires when a terrain
-        # triangle's CENTROID falls inside the lot, so a lot smaller than roughly a
-        # terrain cell (still ~13/283 county-wide even after the 10m regrade above --
-        # real parking lots range down to ~30m^2) can land entirely between centroids
-        # and get zero coverage, just silently vanishing. Force-color each such lot's
-        # single nearest terrain face instead of leaving it uncolored -- not a
-        # geometrically exact footprint, but visible, which a blank spot never is.
-        from scipy.spatial import cKDTree
-        tree = cKDTree(centers[:, :2])
-        n_fallback = 0
-        for poly in parking_shape_parts:
-            parts = poly.geoms if isinstance(poly, BaseMultipartGeometry) else [poly]
-            for part in parts:
-                if part.is_empty or part.area <= 0:
-                    continue
-                if shapely.vectorized.contains(part, centers[:, 0], centers[:, 1]).any():
-                    continue
-                c = part.centroid
-                _, idx = tree.query([c.x, c.y])
-                face_colors[idx] = COLORS["parking"]
-                n_fallback += 1
-        if n_fallback:
-            print(f"  [{tile_name}] {n_fallback} parking lot(s) too small to hit a terrain "
-                  f"centroid, force-colored via nearest-face fallback")
-    if road_ribbon is not None and not road_ribbon.is_empty:
-        mask = shapely.vectorized.contains(road_ribbon, centers[:, 0], centers[:, 1])
-        face_colors[mask] = COLORS["road"]
-    if water_shape is not None and not water_shape.is_empty:
-        mask = shapely.vectorized.contains(water_shape, centers[:, 0], centers[:, 1])
-        face_colors[mask] = COLORS["water"]
-    plate_mesh.visual.face_colors = face_colors
+    plate_mesh.visual.face_colors = COLORS["terrain"]  # uniform now -- no more per-face classification
+    result["terrain"].append(plate_mesh)
 
-    building_meshes = []
     for _, row in b.iterrows():
         geom_utm = row["geometry"]
         tz = bg.terrain_z_mm(geom_utm.centroid.x, geom_utm.centroid.y)
         geom = xf(geom_utm)
         polys = geom.geoms if isinstance(geom, BaseMultipartGeometry) else [geom]
         h_mm = max(row["height_m"] * bg.METERS_TO_MM, bg.MIN_BUILDING_HEIGHT_MM)
-        if row["category"] == "building_default" and row["zoning_cat"] in ZONING_CATEGORY_COLORS:
-            color = ZONING_CATEGORY_COLORS[row["zoning_cat"]]
-        else:
-            color = COLORS[row["category"]]
+        cat = effective_category(row["category"], row["zoning_cat"])
+        color = category_color(cat)
         for poly in polys:
             if not isinstance(poly, Polygon) or poly.area <= 0 or not poly.is_valid:
                 continue
@@ -330,33 +360,45 @@ def build_colored_tile(tile_name, clip_shape_m):
                 continue
             m.apply_translation([0, 0, tz])
             m.visual.face_colors = color
-            building_meshes.append(m)
+            result[cat].append(m)
 
-    tile_mesh = trimesh.util.concatenate([plate_mesh] + building_meshes)
-    # translate to the tile's TRUE global position (matches build_assembly.py)
     global_ox, global_oy = (ox - bg.CX) * bg.MM_PER_M, (oy - bg.CY) * bg.MM_PER_M
-    tile_mesh.apply_translation([global_ox, global_oy, 0])
-    return tile_mesh
+    tile_result = {}
+    for cat, meshes in result.items():
+        if not meshes:
+            continue
+        merged = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
+        merged.apply_translation([global_ox, global_oy, 0])
+        tile_result[cat] = merged
+    return tile_result
 
 
 if __name__ == "__main__":
-    import os
     os.makedirs("output/colored", exist_ok=True)
-    all_meshes = []
+    all_by_category = {cat: [] for cat in CATEGORIES}
+    n_tiles_built = 0
     for tname, clipped in bg.tiles:
         print(f"building {tname} ...")
-        m = build_colored_tile(tname, clipped)
-        if m is not None:
-            all_meshes.append(m)
-            print(f"  -> {len(m.faces)} faces")
-        else:
+        tile_result = build_colored_tile(tname, clipped)
+        if tile_result is None:
             print("  -> empty, skipped")
+            continue
+        n_tiles_built += 1
+        for cat, mesh in tile_result.items():
+            all_by_category[cat].append(mesh)
+        print(f"  -> categories present: {sorted(tile_result.keys())}")
 
-    print(f"\nconcatenating {len(all_meshes)} tiles ...")
-    full_disk = trimesh.util.concatenate(all_meshes)
-    print(f"full disk: {len(full_disk.faces)} faces, bounds={full_disk.bounds.tolist()}")
+    print(f"\n{n_tiles_built}/{len(bg.tiles)} tiles had content; merging per category ...")
+    scene = trimesh.Scene()
+    for cat in CATEGORIES:
+        meshes = all_by_category[cat]
+        if not meshes:
+            print(f"  {cat}: no geometry anywhere, omitted from the scene")
+            continue
+        merged = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
+        scene.add_geometry(merged, node_name=cat, geom_name=cat)
+        print(f"  {cat}: {len(merged.faces)} faces")
 
-    full_disk.export("output/colored/full_disk_colored.ply")
-    full_disk.export("output/colored/full_disk_colored.glb")
-    print("wrote output/colored/full_disk_colored.ply")
+    print(f"\nfull scene bounds={scene.bounds.tolist()}")
+    scene.export("output/colored/full_disk_colored.glb")
     print("wrote output/colored/full_disk_colored.glb")

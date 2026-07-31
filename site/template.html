@@ -156,6 +156,25 @@
     gap: 0.55rem;
     padding: 0.3rem 0;
     font-size: 0.82rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .legend-row.no-toggle {
+    cursor: default;
+  }
+  .legend-row input[type="checkbox"] {
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    margin: 0;
+    accent-color: var(--brass);
+    cursor: pointer;
+  }
+  .legend-row.hidden-category {
+    color: var(--paper-dim);
+  }
+  .legend-row.hidden-category .swatch {
+    opacity: 0.3;
   }
   .swatch {
     width: 0.85rem;
@@ -377,7 +396,7 @@
   <div id="loading">
     <div class="mark" id="loading-mark">Loading terrain &amp; buildings</div>
     <div class="barwrap"><div class="bar" id="loadbar"></div></div>
-    <div class="note" id="loading-note">3.08M faces, Draco-compressed. Should only take a few seconds.</div>
+    <div class="note" id="loading-note">Full county, Draco-compressed. Should only take a few seconds.</div>
     <div class="note mono" id="loading-log" style="text-align:left; max-width:520px; white-space:pre-wrap; opacity:0.7;"></div>
   </div>
 
@@ -385,24 +404,8 @@
   <aside id="panel">
     <div id="panel-scroll">
       <h2>Legend</h2>
-      <div class="legend-row"><span class="swatch" style="background:#d62728"></span>Hospitals<span class="legend-count mono" id="count-hospital"></span></div>
-      <div class="legend-row"><span class="swatch" style="background:#1f4e9c"></span>Government / public<span class="legend-count mono" id="count-government"></span></div>
-      <div class="legend-row"><span class="swatch" style="background:#f28c28"></span>Mercer University<span class="legend-count mono" id="count-mercer"></span></div>
-      <div class="legend-row"><span class="swatch" style="background:#b8934a"></span>Other named landmarks<span class="legend-count mono" id="count-landmark"></span></div>
-      <p class="desc" style="margin:0.75rem 0 0.25rem">Other buildings, by zoning</p>
-      <div class="legend-row"><span class="swatch" style="background:#deb887"></span>Residential</div>
-      <div class="legend-row"><span class="swatch" style="background:#9b59b6"></span>Commercial</div>
-      <div class="legend-row"><span class="swatch" style="background:#7f8c8d"></span>Industrial</div>
-      <div class="legend-row"><span class="swatch" style="background:#9aa54c"></span>Agricultural</div>
-      <div class="legend-row"><span class="swatch" style="background:#bebebe"></span>Other / planned development</div>
-      <div class="legend-row"><span class="swatch" style="background:#d2b48c"></span>Unclassified</div>
-      <p class="desc" style="margin:0.75rem 0 0.25rem">Other features</p>
-      <div class="legend-row"><span class="swatch" style="background:#787878"></span>Roads</div>
-      <div class="legend-row"><span class="swatch" style="background:#9690a7"></span>Parking lots</div>
-      <div class="legend-row"><span class="swatch" style="background:#4678c8"></span>Water</div>
-      <div class="legend-row"><span class="swatch" style="background:#5aa05a"></span>Terrain (2.5x exaggerated)</div>
-      <p class="desc" style="margin:0.75rem 0 0.25rem">Place labels</p>
-      <p class="desc" style="margin-bottom:0">Neighborhoods, industrial areas, and smaller communities fade in as you fly closer — industrial areas (amber, small caps) are visible from farthest away, neighborhoods at medium range, and smaller communities only up close.</p>
+      <p class="desc" style="margin-bottom:0.5rem">Click any row to show/hide that layer.</p>
+      <div id="legend-rows"></div>
 
       <h2>Landmark index</h2>
       <p class="desc" style="margin-bottom:0.5rem">Click any building to fly the camera to it. Real elevation data — <a href="#" id="reset-view-link" class="mono" style="color:var(--brass-bright)">reset view</a>.</p>
@@ -519,6 +522,34 @@ const CATEGORY_COLOR = {
   mercer: "#f28c28",
   landmark: "#b8934a",
 };
+
+// Legend rows, in display order -- "node" must exactly match the mesh node
+// names build_colored_disk.py's CATEGORIES list exports (each category is
+// its own node in the GLB specifically so it can be shown/hidden
+// independently here). "terrain" has noToggle: true -- hiding the ground
+// plane isn't useful, so it's listed but not made interactive.
+const LEGEND_SECTIONS = [
+  { rows: [
+    { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital" },
+    { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government" },
+    { node: "mercer", label: "Mercer University", color: "#f28c28", countId: "count-mercer" },
+    { node: "landmark", label: "Other named landmarks", color: "#b8934a", countId: "count-landmark" },
+  ] },
+  { heading: "Other buildings, by zoning", rows: [
+    { node: "residential", label: "Residential", color: "#deb887" },
+    { node: "commercial", label: "Commercial", color: "#9b59b6" },
+    { node: "industrial", label: "Industrial", color: "#7f8c8d" },
+    { node: "agricultural", label: "Agricultural", color: "#9aa54c" },
+    { node: "other", label: "Other / planned development", color: "#bebebe" },
+    { node: "unclassified", label: "Unclassified", color: "#d2b48c" },
+  ] },
+  { heading: "Other features", rows: [
+    { node: "road", label: "Roads", color: "#787878" },
+    { node: "parking", label: "Parking lots", color: "#9690a7" },
+    { node: "water", label: "Water", color: "#4678c8" },
+    { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true },
+  ] },
+];
 
 const container = document.getElementById("viewer-container");
 const landmarkGroupsEl = document.getElementById("landmark-groups");
@@ -638,6 +669,10 @@ let placeLabelEls = null;
 
 gltfLoader.parse(modelBuffer, "", (gltf) => {
   log("glTF parsed OK -- scene ready");
+  // build_colored_disk.py exports each legend category as its own top-level
+  // named node (scene.add_geometry(merged, node_name=cat, ...)) specifically
+  // so each one can be found by name here and toggled independently.
+  const categoryMeshes = {};
   gltf.scene.traverse((obj) => {
     if (obj.isMesh) {
       obj.castShadow = true;
@@ -651,11 +686,13 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
       obj.material.metalness = 0;
       obj.material.roughness = 0.85;
       obj.geometry.computeBoundsTree();
+      if (obj.name) categoryMeshes[obj.name] = obj;
     }
   });
   modelGroup.add(gltf.scene);
   hotspotEls = buildHotspots();
   placeLabelEls = buildPlaceLabels();
+  buildLegend(categoryMeshes);
   frameDefaultView();
   loadingEl.classList.add("hidden");
   requestAnimationFrame(animate);
@@ -723,6 +760,65 @@ function buildHotspots() {
   return els;
 }
 
+// ---- legend: one row per category, checkbox toggles that mesh's
+// visibility directly. A category absent from THIS model (categoryMeshes
+// has no entry -- e.g. no agricultural parcels happened to fall in a small
+// test build) gets a disabled, dimmed row instead of a broken toggle. ----
+function buildLegend(categoryMeshes) {
+  const rowsEl = document.getElementById("legend-rows");
+
+  for (const section of LEGEND_SECTIONS) {
+    if (section.heading) {
+      const p = document.createElement("p");
+      p.className = "desc";
+      p.style.margin = "0.75rem 0 0.25rem";
+      p.textContent = section.heading;
+      rowsEl.appendChild(p);
+    }
+    for (const row of section.rows) {
+      const label = document.createElement("label");
+      label.className = "legend-row" + (row.noToggle ? " no-toggle" : "");
+      const countSpan = row.countId ? `<span class="legend-count mono" id="${row.countId}"></span>` : "";
+      if (row.noToggle) {
+        label.innerHTML = `<span class="swatch" style="background:${row.color}"></span>${row.label}${countSpan}`;
+      } else {
+        label.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:${row.color}"></span>${row.label}${countSpan}`;
+        const checkbox = label.querySelector("input");
+        const mesh = categoryMeshes[row.node];
+        if (!mesh) {
+          checkbox.disabled = true;
+          checkbox.checked = false;
+          label.classList.add("hidden-category", "no-toggle");
+          label.title = "Nothing in this category in the current model";
+        } else {
+          checkbox.addEventListener("change", () => {
+            mesh.visible = checkbox.checked;
+            label.classList.toggle("hidden-category", !checkbox.checked);
+          });
+        }
+      }
+      rowsEl.appendChild(label);
+    }
+  }
+
+  // place labels aren't a mesh -- they're the DOM elements built by
+  // buildPlaceLabels() -- so their toggle just flips a flag that
+  // updatePlaceLabelPositions() checks every frame, instead of touching a mesh.
+  const placeLabel = document.createElement("label");
+  placeLabel.className = "legend-row";
+  placeLabel.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:var(--brass)"></span>Place labels`;
+  placeLabel.querySelector("input").addEventListener("change", (e) => {
+    placeLabelsVisible = e.target.checked;
+  });
+  rowsEl.appendChild(placeLabel);
+
+  const desc = document.createElement("p");
+  desc.className = "desc";
+  desc.style.marginBottom = "0";
+  desc.textContent = "Neighborhoods, industrial areas, and smaller communities fade in as you fly closer — industrial areas (amber, small caps) are visible from farthest away, neighborhoods at medium range, and smaller communities only up close.";
+  rowsEl.appendChild(desc);
+}
+
 function updateHotspotScreenPositions() {
   if (!hotspotEls) return;
   const halfW = window.innerWidth / 2, halfH = window.innerHeight / 2;
@@ -757,8 +853,14 @@ function buildPlaceLabels() {
   return els;
 }
 
+let placeLabelsVisible = true;
+
 function updatePlaceLabelPositions() {
   if (!placeLabelEls) return;
+  if (!placeLabelsVisible) {
+    for (const { el } of placeLabelEls) el.style.display = "none";
+    return;
+  }
   const halfW = window.innerWidth / 2, halfH = window.innerHeight / 2;
   const v = new THREE.Vector3();
   for (const { el, worldPos, tier } of placeLabelEls) {
