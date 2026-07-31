@@ -2,7 +2,7 @@
 
 An interactive, color-coded 3D relief map of all of Bibb County, Georgia (not just downtown — see below), running entirely in the browser as one self-contained HTML file — no server, no external network calls, no build step to view it.
 
-**Live version**: `site/downtown_macon_3d.html` — open it directly in a browser (filename is a holdover from when the model only covered downtown; kept as-is so existing links/bookmarks don't break).
+**Live version**: `site/downtown_macon_3d.html` — open it directly in a browser (filename is a holdover from when the model only covered downtown; kept as-is so existing links/bookmarks don't break). Also hosted on GitHub Pages (unlisted link, not publicly announced). A second, lower-memory build (`site/downtown_macon_3d_mobile.html`, coarser terrain, see `scripts/build_mobile.sh`) exists for phones — `index.html` picks between the two automatically based on pointer type.
 
 ## What it is
 
@@ -12,7 +12,7 @@ An interactive, color-coded 3D relief map of all of Bibb County, Georgia (not ju
 - Every legend category (each building type, roads, parking, water, place labels) can be shown/hidden independently — click a row in the side panel. The model is exported as a multi-node scene specifically so this works (see `CLAUDE.md`). Building categories also have a second, independent toggle: click a category's color swatch to grey it out ("un-highlight") without hiding it.
 - Data overlays: historical/statistical layers that float above the base map as their own toggleable section, distinct from the base map's own categories. 1938 HOLC redlining grades (University of Richmond's Mapping Inequality project, CC BY-NC-SA 4.0), shown alongside five present-day Census ACS demographic layers (race, education, labor force participation, income, homeownership) so today's patterns can be compared directly against the 1930s grades — see `docs/OVERLAYS.md` for data sources, license/citation, and how to add the next overlay.
 - Labeled: highway routes (I-75, US 41, ...) as distinct shield badges, plus ~175 named neighborhoods, industrial areas, and smaller communities (from OpenStreetMap), all floating above the terrain and fading in by camera distance — highways and industrial areas visible from farthest away, neighborhoods at medium range, smaller communities only up close — see `scripts/fetch_places.py`/`build_labels.py`.
-- A hand-rolled Three.js scene with a free-roam camera: **WASD** to move, **drag** to look around, **Q/E** for down/up, **shift** to boost speed, **scroll** to move forward/back. Pitch is clamped so you can never flip the view upside down.
+- A hand-rolled Three.js scene with a free-roam camera: **WASD** to move, **drag** to look around, **Q/E** for down/up, **shift** to boost speed, **scroll** to move forward/back. Pitch is clamped so you can never flip the view upside down. On touch devices, an on-screen joystick replaces WASD (push to the edge to run), pinch replaces scroll-to-zoom, and small buttons replace Q/E.
 - Click any landmark in the side panel or on the model to smoothly fly the camera to it.
 - The whole page — geometry, colors, fonts, Three.js + GLTFLoader + DRACOLoader, and the Draco decoder — is base64-embedded directly into one HTML file via `site/assemble.py`, so the published page has zero external dependencies (this was a deliberate constraint: it needs to run inside strict CSPs that block any external network request, including `connect-src` restrictions that block even `blob:` URL fetches). Three.js/GLTFLoader/DRACOLoader are wired together via an import map with runtime-generated `blob:` URIs (not `data:` — the real hosting platform's CSP blocks `data:` for scripts) — see `CLAUDE.md` for exactly how.
 
@@ -55,7 +55,9 @@ CENSUS_API_KEY=... python3 scripts/fetch_demographics.py  # -> data/demographics
 python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~9M faces
                                            # for the whole county as a multi-node scene -- several minutes)
 npx gltf-pipeline -i output/colored/full_disk_colored.glb -o site/full_disk_draco.glb -d --draco.compressionLevel=10 --draco.quantizePositionBits=14 --draco.quantizeColorBits=8 --draco.unifiedQuantization
-python3 site/assemble.py                  # -> site/downtown_macon_3d.html (~11MB)
+python3 site/assemble.py                  # -> site/downtown_macon_3d.html (~10MB)
+bash scripts/build_mobile.sh               # -> site/downtown_macon_3d_mobile.html (~9MB, coarser terrain --
+                                           # separate lower-memory build for phones, see CLAUDE.md)
 ```
 
 `build_colored_disk.py` imports `build_grid.py` directly for shared terrain/tile-geometry logic — keep both in `scripts/` together.

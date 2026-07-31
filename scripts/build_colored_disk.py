@@ -568,7 +568,11 @@ def build_demographics_layers():
 
 
 if __name__ == "__main__":
-    os.makedirs("output/colored", exist_ok=True)
+    # OUTPUT_GLB_PATH lets the same script build a second, coarser "mobile"
+    # variant (via DEM_SAMPLE_SPACING_M, see build_grid.py) without
+    # overwriting the desktop one -- see scripts/build_mobile.sh.
+    out_path = os.environ.get("OUTPUT_GLB_PATH", "output/colored/full_disk_colored.glb")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     all_by_category = {cat: [] for cat in CATEGORIES}
     n_tiles_built = 0
     for tname, clipped in bg.tiles:
@@ -604,5 +608,5 @@ if __name__ == "__main__":
         print(f"  {cat}: {len(merged.faces)} faces")
 
     print(f"\nfull scene bounds={scene.bounds.tolist()}")
-    scene.export("output/colored/full_disk_colored.glb")
-    print("wrote output/colored/full_disk_colored.glb")
+    scene.export(out_path)
+    print(f"wrote {out_path}")

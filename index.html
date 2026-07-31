@@ -4,7 +4,12 @@
 <meta charset="utf-8" />
 <meta name="robots" content="noindex, nofollow" />
 <title>Bibb County, Georgia — 3D Relief Model</title>
-<meta http-equiv="refresh" content="0; url=site/downtown_macon_3d.html" />
+<!-- No unconditional <meta refresh> here on purpose -- which file to load
+     depends on pointer type (see script below), and meta-refresh can't be
+     conditional. If JS is disabled, the visible link below falls back to
+     the desktop build, same as it would have before this device check
+     existed -- a heavier load for the rare JS-disabled mobile visitor is an
+     acceptable edge case next to needing JS to detect touch at all. -->
 <style>
   html, body { height: 100%; margin: 0; background: #12181a; color: #ece6d9; font-family: -apple-system, sans-serif; }
   .wrap { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; }
@@ -16,6 +21,16 @@
   <p>Loading the map… if it doesn't redirect automatically,
     <a href="site/downtown_macon_3d.html">click here</a>.</p>
 </div>
-<script>location.replace("site/downtown_macon_3d.html");</script>
+<script>
+  // Coarse pointer (touch) devices get a lower-memory build -- the
+  // full-detail desktop model's ~9.6M faces was crashing iOS Safari
+  // (repeated "A problem repeatedly occurred" reloads, consistent with
+  // hitting the per-tab memory ceiling). See scripts/build_mobile.sh and
+  // CLAUDE.md for how the mobile variant is built and why.
+  var target = window.matchMedia("(pointer: coarse)").matches
+    ? "site/downtown_macon_3d_mobile.html"
+    : "site/downtown_macon_3d.html";
+  location.replace(target);
+</script>
 </body>
 </html>

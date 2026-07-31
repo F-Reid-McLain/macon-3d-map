@@ -1,5 +1,12 @@
 import base64
 import json
+import os
+
+# Overridable so scripts/build_mobile.sh can produce a second, lower-memory
+# HTML file (a different Draco GLB embedded) without touching the desktop
+# build -- see that script and CLAUDE.md's memory-budget notes.
+MODEL_GLB_PATH = os.environ.get("MODEL_GLB_PATH", "site/full_disk_draco.glb")
+OUTPUT_HTML_PATH = os.environ.get("OUTPUT_HTML_PATH", "site/downtown_macon_3d.html")
 
 LANDMARKS = [
     {"id": "gov-1", "name": "Bibb County Health Department", "category": "government", "x": 11.9, "y": 122.9, "z": 10.7},
@@ -66,10 +73,10 @@ html = html.replace("__DRACO_DECODER_JS_B64__", b64_file("site/draco_decoder.js"
 html = html.replace("__DRACO_WASM_WRAPPER_JS_B64__", b64_file("site/draco_wasm_wrapper.js"))
 html = html.replace("__DRACO_DECODER_WASM_B64__", b64_file("site/draco_decoder.wasm"))
 
-print("splicing in draco-compressed model base64...")
-html = html.replace("__MODEL_DATA_B64__", b64_file("site/full_disk_draco.glb"))
+print(f"splicing in draco-compressed model base64 ({MODEL_GLB_PATH})...")
+html = html.replace("__MODEL_DATA_B64__", b64_file(MODEL_GLB_PATH))
 
 print(f"final html size: {len(html)/1e6:.1f} MB")
-with open("site/downtown_macon_3d.html", "w", encoding="utf-8") as f:
+with open(OUTPUT_HTML_PATH, "w", encoding="utf-8") as f:
     f.write(html)
-print("wrote site/downtown_macon_3d.html")
+print(f"wrote {OUTPUT_HTML_PATH}")

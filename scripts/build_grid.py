@@ -58,7 +58,8 @@ ROAD_GROOVE_DEPTH_MM = 0.3
 WATER_RECESS_MM = 0.4
 PLATE_MARGIN_M = 15.0
 MIN_TILE_CONTENT_M2 = 2000.0
-DEM_SAMPLE_SPACING_M = 20.0   # tried halving this to 10m for sharper road/parking-lot color
+DEM_SAMPLE_SPACING_M = float(os.environ.get("DEM_SAMPLE_SPACING_M", "20.0"))
+                               # tried halving this to 10m for sharper road/parking-lot color
                                # classification -- reverted. Across the WHOLE COUNTY (unlike a
                                # dense downtown test tile, which is ~44% terrain) terrain turns
                                # out to be ~78% of total geometry, so quadrupling terrain
@@ -67,6 +68,12 @@ DEM_SAMPLE_SPACING_M = 20.0   # tried halving this to 10m for sharper road/parki
                                # hard memory ceiling and aborted outright, not just ran slow.
                                # See build_colored_disk.py's parking-lot fallback for how small
                                # features got handled without needing more geometry at all.
+                               # Configurable via env var (default 20.0, the desktop value) so
+                               # the SAME pipeline can build a coarser "mobile" variant too --
+                               # see scripts/build_mobile.sh and CLAUDE.md's memory-budget notes.
+                               # Going COARSER (a bigger number) is the safe direction -- it's
+                               # the opposite of the failed 10m experiment above, so this doesn't
+                               # risk the Draco memory-ceiling failure that motivated reverting.
 
 UTM_CRS = "EPSG:32617"
 OUT_DIR = "output/grid"
