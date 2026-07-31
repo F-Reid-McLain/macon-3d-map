@@ -685,7 +685,7 @@ scene.background = new THREE.Color(0x12181a); // matches --ink
 // before without any equivalent issue.
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 5000);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -766,10 +766,16 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
   // build_colored_disk.py exports each legend category as its own top-level
   // named node (scene.add_geometry(merged, node_name=cat, ...)) specifically
   // so each one can be found by name here and toggled independently.
+  // Flush ground-level layers (terrain/road/parking/water) sit right at grade
+  // -- any shadow they'd cast on themselves or each other is visually
+  // meaningless, but rendering their (large, high-vertex) geometry into the
+  // shadow depth pass every frame isn't free. Only actual 3D volumes
+  // (buildings) need to cast shadows; everything still receives them.
+  const NON_SHADOW_CASTING = new Set(["terrain", "road", "parking", "water"]);
   const categoryMeshes = {};
   gltf.scene.traverse((obj) => {
     if (obj.isMesh) {
-      obj.castShadow = true;
+      obj.castShadow = !NON_SHADOW_CASTING.has(obj.name);
       obj.receiveShadow = true;
       // trimesh's GLB export doesn't set metallicFactor, so it defaults to
       // the glTF spec's default of 1.0 (fully metallic) -- metals barely
