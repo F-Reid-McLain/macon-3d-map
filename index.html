@@ -6,10 +6,10 @@
 <title>Bibb County, Georgia — 3D Relief Model</title>
 <!-- No unconditional <meta refresh> here on purpose -- which file to load
      depends on pointer type (see script below), and meta-refresh can't be
-     conditional. If JS is disabled, the visible link below falls back to
-     the desktop build, same as it would have before this device check
-     existed -- a heavier load for the rare JS-disabled mobile visitor is an
-     acceptable edge case next to needing JS to detect touch at all. -->
+     conditional. If JS is disabled, the visible fallback link falls back to
+     the desktop build (its href is only rewritten by JS below) -- a heavier
+     load for the rare JS-disabled mobile visitor is an acceptable edge case
+     next to needing JS to detect touch at all. -->
 <style>
   html, body { height: 100%; margin: 0; background: #12181a; color: #ece6d9; font-family: -apple-system, sans-serif; }
   .wrap { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; }
@@ -19,7 +19,7 @@
 <body>
 <div class="wrap">
   <p>Loading the map… if it doesn't redirect automatically,
-    <a href="site/downtown_macon_3d.html">click here</a>.</p>
+    <a id="fallback-link" href="site/downtown_macon_3d.html">click here</a>.</p>
 </div>
 <script>
   // Coarse pointer (touch) devices get a lower-memory build -- the
@@ -27,9 +27,16 @@
   // (repeated "A problem repeatedly occurred" reloads, consistent with
   // hitting the per-tab memory ceiling). See scripts/build_mobile.sh and
   // CLAUDE.md for how the mobile variant is built and why.
+  //
+  // The visible fallback link's href is rewritten to match BEFORE the
+  // automatic redirect fires, not just the redirect target -- a real bug
+  // found in testing: on a slow device, someone can see/tap "click here"
+  // before location.replace() runs, and a hardcoded desktop href there
+  // would send a phone to the heavy build regardless of this whole check.
   var target = window.matchMedia("(pointer: coarse)").matches
     ? "site/downtown_macon_3d_mobile.html"
     : "site/downtown_macon_3d.html";
+  document.getElementById("fallback-link").href = target;
   location.replace(target);
 </script>
 </body>
