@@ -104,13 +104,27 @@ def build_colored_tile(tile_name, clip_shape_m):
     # they render flush with the surrounding surface, just colored grey via
     # the spatial-classification pass below. Water keeps its physical recess
     # (still cut, via cut_shapes) since that reads better visually either way. ----
+    #
+    # Width is NOT bg.ROAD_GROOVE_WIDTH_MM (0.9mm, half-width 0.45mm) -- that's
+    # sized for a physical print groove, not for this face-centroid color
+    # classification. Classification tests each terrain triangle's CENTROID
+    # against the ribbon (see face_colors below), and the terrain grid itself
+    # has ~20m cells (bg.DEM_SAMPLE_SPACING_M) -> ~1.6mm at this 1:12,500
+    # scale -- a ribbon narrower than a terrain cell mostly threads between
+    # centroids without ever containing one, so roads came out as sparse,
+    # broken flecks instead of a continuous line (confirmed visually before
+    # this fix). ROAD_PAINT_WIDTH_MM is comfortably wider than a terrain
+    # cell's ~2.3mm diagonal so a road can't cross a cell without catching its
+    # centroid, while still reading as a reasonably narrow line at this scale
+    # (water lines already use a visually-similar 3mm width and look fine).
+    ROAD_PAINT_WIDTH_MM = 3.0
     road_ribbon_parts = []
     cut_shapes = []
     for line_utm in r["geometry"]:
         if line_utm.is_empty or line_utm.length == 0:
             continue
         line_local = xf(line_utm)
-        ribbon = line_local.buffer(bg.ROAD_GROOVE_WIDTH_MM / 2)
+        ribbon = line_local.buffer(ROAD_PAINT_WIDTH_MM / 2)
         road_ribbon_parts.append(ribbon)
     road_ribbon = unary_union(road_ribbon_parts) if road_ribbon_parts else None
 
