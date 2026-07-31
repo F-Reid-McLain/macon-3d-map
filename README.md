@@ -10,7 +10,7 @@ An interactive, color-coded 3D relief map of all of Bibb County, Georgia (not ju
 - Building heights: real OSM tags and Microsoft's own per-building height estimates where available (~34% of buildings), a neighborhood-aware zone heuristic elsewhere (see `scripts/assign_zones.py`) — not survey data for most buildings, but not a flat guess either.
 - Color-coded: hospitals (red), government/public buildings (blue), Mercer University (orange), and named landmarks (brass) always take priority; every other building is colored by its actual zoning parcel from Bibb County's tax assessor data (residential/commercial/industrial/agricultural/other), not left flat tan — see `scripts/fetch_zoning.py`/`build_colored_disk.py`'s `classify_zoning()`. Roads (grey), parking lots (lavender-grey), water (blue), terrain (green).
 - Every legend category (each building type, roads, parking, water, place labels) can be shown/hidden independently — click a row in the side panel. The model is exported as a multi-node scene specifically so this works (see `CLAUDE.md`). Building categories also have a second, independent toggle: click a category's color swatch to grey it out ("un-highlight") without hiding it.
-- Data overlays: historical/statistical layers that float above the base map as their own toggleable section, distinct from the base map's own categories. First one: 1938 HOLC redlining grades (University of Richmond's Mapping Inequality project, CC BY-NC-SA 4.0 — see `docs/OVERLAYS.md` for the data source, license/citation, and how to add the next overlay).
+- Data overlays: historical/statistical layers that float above the base map as their own toggleable section, distinct from the base map's own categories. 1938 HOLC redlining grades (University of Richmond's Mapping Inequality project, CC BY-NC-SA 4.0), shown alongside five present-day Census ACS demographic layers (race, education, labor force participation, income, homeownership) so today's patterns can be compared directly against the 1930s grades — see `docs/OVERLAYS.md` for data sources, license/citation, and how to add the next overlay.
 - Labeled: highway routes (I-75, US 41, ...) as distinct shield badges, plus ~175 named neighborhoods, industrial areas, and smaller communities (from OpenStreetMap), all floating above the terrain and fading in by camera distance — highways and industrial areas visible from farthest away, neighborhoods at medium range, smaller communities only up close — see `scripts/fetch_places.py`/`build_labels.py`.
 - A hand-rolled Three.js scene with a free-roam camera: **WASD** to move, **drag** to look around, **Q/E** for down/up, **shift** to boost speed, **scroll** to move forward/back. Pitch is clamped so you can never flip the view upside down.
 - Click any landmark in the side panel or on the model to smoothly fly the camera to it.
@@ -18,7 +18,7 @@ An interactive, color-coded 3D relief map of all of Bibb County, Georgia (not ju
 
 ## Where this project is headed
 
-This repo shares its data-prep pipeline with the sibling **macon-3d-print** repo (the physically-printable version), but the two are expected to diverge substantially. Now covers the whole county (clipped to the real county polygon, not the circle this started as) instead of just downtown; next up is likely toggleable stats overlays (Census ACS or similar) and/or even better building data (Overture Maps Foundation, Bibb County's own GIS). See `CLAUDE.md` for the current architecture and the reasoning behind it.
+This repo shares its data-prep pipeline with the sibling **macon-3d-print** repo (the physically-printable version), but the two are expected to diverge substantially. Now covers the whole county (clipped to the real county polygon, not the circle this started as) instead of just downtown; next up is likely more data overlays (commissioner district boundaries, school districts, flood zones — see `docs/OVERLAYS.md`), music-heritage landmarks, and/or even better building data (Overture Maps Foundation, Bibb County's own GIS). See `CLAUDE.md` for the current architecture and the reasoning behind it.
 
 ## Rebuilding the site
 
@@ -49,7 +49,10 @@ python3 scripts/fetch_redlining.py        # -> data/redlining_raw.geojson (40 gr
                                            # polygons for Macon, GA -- an overlay, not part of the base map;
                                            # see docs/OVERLAYS.md. Independent of the rest of the pipeline,
                                            # like fetch_places.py above)
-python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~10.8M faces
+CENSUS_API_KEY=... python3 scripts/fetch_demographics.py  # -> data/demographics_raw.geojson (136 Census
+                                           # block groups x 5 ACS variables -- also an overlay, see
+                                           # docs/OVERLAYS.md. Needs a free key: api.census.gov/data/key_signup.html
+python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~9M faces
                                            # for the whole county as a multi-node scene -- several minutes)
 npx gltf-pipeline -i output/colored/full_disk_colored.glb -o site/full_disk_draco.glb -d --draco.compressionLevel=10 --draco.quantizePositionBits=14 --draco.quantizeColorBits=8 --draco.unifiedQuantization
 python3 site/assemble.py                  # -> site/downtown_macon_3d.html (~11MB)

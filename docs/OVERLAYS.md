@@ -86,6 +86,49 @@ C = yellow, D = red. Kept distinct from every other color already in use
 elsewhere in the legend (zoning, hospitals, etc.) so there's no visual
 collision when overlays and base-map categories are on screen together.
 
+## Demographics today (Census ACS 5-year estimates)
+
+**What it is.** Five present-day Census block group metrics, shown
+deliberately alongside the redlining overlay above so the two can be
+compared directly: % Black or African American (the exact dimension HOLC
+grading discriminated on, not a general "race" composite), % with a
+Bachelor's degree or higher, labor force participation rate, median
+household income, and homeownership rate. Income and homeownership were
+added beyond what was originally asked for because they're the two most
+commonly-cited metrics in actual redlining-legacy research.
+
+**Data source.** US Census Bureau ACS 5-year estimates (2022 vintage),
+fetched via the public Census API (`api.census.gov`), which now requires a
+free API key — instant email signup at
+https://api.census.gov/data/key_signup.html, read from the `CENSUS_API_KEY`
+environment variable at fetch time, never hardcoded or committed. Boundary
+geometry comes from Census TIGERweb's public ArcGIS REST service (no key
+needed) — same request pattern `fetch_zoning.py` already uses for Bibb
+County's tax parcels, just a different host/layer. Geography is **block
+group**, not tract, to sit closer to the neighborhood scale the HOLC
+polygons were drawn at.
+
+**Rendering approach — the one real departure from the redlining template.**
+Redlining has 4 fixed letter grades; these are continuous values, so
+`build_demographics_layers()` quantile-buckets each variable's 136 block
+groups into 5 classes (roughly equal COUNTS per class, standard choropleth
+practice, not equal-width value ranges that one outlier could skew) and
+colors each from a 5-step sequential ColorBrewer ramp
+(`DEMOGRAPHIC_COLOR_RAMPS`). Unlike redlining, all 5 buckets of one variable
+merge into **one** scene node — 5 variables × 5 buckets as 25 separate
+toggle rows would be unusable, so the toggle granularity is "show this
+variable" not "show this specific range." `site/template.html`'s legend
+renders a small 5-swatch gradient strip per row (`.ramp-swatch`) instead of
+one solid color, so the range is still visible even though it's not
+individually toggleable. Same float-above-buildings/translucent treatment as
+redlining (`REDLINING_LIFT_MM`, and node names prefixed `demo_` are included
+in the same transparency/no-shadow handling redlining already needed).
+
+**Colors**: grey for race (deliberately neutral — encodes magnitude only, no
+implied value judgment about the demographic itself), purple for education,
+orange for labor force, blue for income, green for homeownership. Chosen to
+avoid hues already load-bearing elsewhere in the legend.
+
 ## Adding the next overlay
 
 The redlining layer is the template to copy:
@@ -112,7 +155,8 @@ The redlining layer is the template to copy:
    compress), re-run `site/assemble.py`. Verify with Playwright against a
    real-CSP local server (see `CLAUDE.md`) before publishing.
 
-Known candidates for "next overlay": school district boundaries, Census ACS
-demographic data (income, race, etc. — useful alongside redlining, to show
-how closely today's patterns still track the 1930s grades), flood zones,
-historic district boundaries.
+Known candidates for "next overlay": Macon-Bibb commissioner district
+boundaries (likely on the same ArcGIS Hub `fetch_zoning.py` already found),
+school district boundaries, flood zones, historic district boundaries, EPA
+EJScreen environmental justice indicators, CDC PLACES neighborhood health
+outcomes.

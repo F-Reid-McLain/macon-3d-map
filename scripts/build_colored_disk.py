@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import trimesh
 from shapely.geometry import Polygon, box
@@ -86,6 +87,33 @@ REDLINING_COLORS = {
 }
 REDLINING_GRADE_TO_NODE = {"A": "redlining_a", "B": "redlining_b", "C": "redlining_c", "D": "redlining_d"}
 
+# Census ACS demographic overlays -- see scripts/fetch_demographics.py and
+# docs/OVERLAYS.md. Unlike redlining's 4 fixed A-D grades, these are
+# continuous values, so each block group is bucketed into 5 quantile classes
+# (roughly equal COUNTS of block groups per class, standard choropleth
+# practice) and colored from a 5-step sequential ramp (ColorBrewer palettes)
+# -- but unlike redlining, all 5 buckets of one variable share ONE scene
+# node/legend row (toggle the whole variable at once, not bucket-by-bucket --
+# 5 variables x 5 buckets as 25 separate toggle rows would be unusable).
+# Ramps deliberately avoid hues already load-bearing elsewhere in the legend
+# (terrain/agricultural green, water/redlining-B blue, commercial purple) --
+# race uses a neutral grey specifically so the color encodes MAGNITUDE only,
+# not an implied value judgment about the demographic itself.
+DEMOGRAPHIC_VARS = [
+    ("pct_black", "demo_race_black"),
+    ("pct_bachelors_plus", "demo_education"),
+    ("labor_force_participation", "demo_labor_force"),
+    ("median_household_income", "demo_income"),
+    ("homeownership_rate", "demo_homeownership"),
+]
+DEMOGRAPHIC_COLOR_RAMPS = {
+    "demo_race_black": [[247, 247, 247, 255], [204, 204, 204, 255], [150, 150, 150, 255], [99, 99, 99, 255], [37, 37, 37, 255]],
+    "demo_education": [[242, 240, 247, 255], [203, 201, 226, 255], [158, 154, 200, 255], [117, 107, 177, 255], [84, 39, 143, 255]],
+    "demo_labor_force": [[254, 237, 222, 255], [253, 190, 133, 255], [253, 141, 60, 255], [230, 85, 13, 255], [166, 54, 3, 255]],
+    "demo_income": [[239, 243, 255, 255], [189, 215, 231, 255], [107, 174, 214, 255], [49, 130, 189, 255], [8, 81, 156, 255]],
+    "demo_homeownership": [[237, 248, 233, 255], [186, 228, 179, 255], [116, 196, 118, 255], [49, 163, 84, 255], [0, 109, 44, 255]],
+}
+
 # Every node name that ends up in the exported Scene, in legend order -- also
 # the exact set of names site/template.html looks for when wiring up toggle
 # checkboxes. "terrain" is deliberately NOT toggleable in the UI (hiding the
@@ -95,6 +123,7 @@ CATEGORIES = [
     "hospital", "government", "mercer", "landmark",
     "residential", "commercial", "industrial", "agricultural", "other", "unclassified",
     "redlining_a", "redlining_b", "redlining_c", "redlining_d",
+    "demo_race_black", "demo_education", "demo_labor_force", "demo_income", "demo_homeownership",
 ]
 
 DECAL_HEIGHT_MM = 0.12
@@ -488,6 +517,56 @@ def build_redlining_layer():
     return result
 
 
+def build_demographics_layers():
+    """Returns {demo_race_black/education/labor_force/income/homeownership:
+    mesh} for whichever variables have data. Same not-tiled, decal-at-
+    REDLINING_LIFT_MM approach as build_redlining_layer() (136 Census block
+    group polygons total for the whole county -- cheap enough for one pass),
+    but each variable's block groups are quantile-bucketed into 5 classes
+    and colored from that variable's sequential ramp (DEMOGRAPHIC_COLOR_RAMPS)
+    instead of 4 fixed letter-grade colors, and ALL 5 buckets of one variable
+    merge into one scene node/legend toggle (see DEMOGRAPHIC_VARS comment)."""
+    path = "data/demographics_raw.geojson"
+    if not os.path.exists(path):
+        print("no data/demographics_raw.geojson -- run scripts/fetch_demographics.py first; skipping this layer")
+        return {}
+
+    gdf = gpd.read_file(path).to_crs(bg.UTM_CRS)
+    result = {}
+    for col, node in DEMOGRAPHIC_VARS:
+        valid = gdf[gdf[col].notna()].copy()
+        if len(valid) == 0:
+            continue
+        # quantile buckets: roughly equal COUNTS of block groups per class,
+        # standard choropleth practice -- not equal-width value ranges, which
+        # a single outlier block group could badly skew.
+        valid["bucket"] = pd.qcut(valid[col], 5, labels=False, duplicates="drop")
+        ramp = DEMOGRAPHIC_COLOR_RAMPS[node]
+
+        decals = []
+        for _, row in valid.iterrows():
+            geom_utm = row["geometry"]
+            if geom_utm.is_empty:
+                continue
+            tz = bg.terrain_z_mm(geom_utm.centroid.x, geom_utm.centroid.y) + REDLINING_LIFT_MM
+            geom_local = affine_transform(geom_utm, [bg.MM_PER_M, 0, 0, bg.MM_PER_M, -bg.CX * bg.MM_PER_M, -bg.CY * bg.MM_PER_M])
+            parts = geom_local.geoms if isinstance(geom_local, BaseMultipartGeometry) else [geom_local]
+            for part in parts:
+                if part.is_empty or part.area <= 0:
+                    continue
+                try:
+                    decal = trimesh.creation.extrude_polygon(part, height=DECAL_HEIGHT_MM, engine="earcut")
+                except Exception:
+                    continue
+                decal.apply_translation([0, 0, tz])
+                decal.visual.face_colors = ramp[int(row["bucket"])]
+                decals.append(decal)
+
+        if decals:
+            result[node] = trimesh.util.concatenate(decals) if len(decals) > 1 else decals[0]
+    return result
+
+
 if __name__ == "__main__":
     os.makedirs("output/colored", exist_ok=True)
     all_by_category = {cat: [] for cat in CATEGORIES}
@@ -505,6 +584,11 @@ if __name__ == "__main__":
 
     print("\nbuilding redlining overlay (not tiled -- 40 polygons total) ...")
     for node, mesh in build_redlining_layer().items():
+        all_by_category[node].append(mesh)
+        print(f"  {node}: {len(mesh.faces)} faces")
+
+    print("\nbuilding demographics overlays (not tiled -- 136 block groups total) ...")
+    for node, mesh in build_demographics_layers().items():
         all_by_category[node].append(mesh)
         print(f"  {node}: {len(mesh.faces)} faces")
 

@@ -196,6 +196,23 @@
     padding: 0;
     background-clip: padding-box;
   }
+  /* demographic overlay rows show a 5-step ramp instead of one solid swatch
+     -- continuous data (income, %, etc.), not a fixed category color. */
+  .ramp-swatch {
+    display: flex;
+    flex: none;
+    height: 0.85rem;
+    border-radius: 2px;
+    overflow: hidden;
+    border: 1px solid rgba(0,0,0,0.25);
+  }
+  .ramp-swatch span {
+    width: 0.5rem;
+    height: 100%;
+  }
+  .legend-row.hidden-category .ramp-swatch {
+    opacity: 0.3;
+  }
   button.swatch {
     cursor: pointer;
   }
@@ -632,6 +649,17 @@ const LEGEND_SECTIONS = [
       { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d" },
     ],
   },
+  {
+    heading: "Demographics today (Census ACS 5-year estimates)",
+    note: "By Census block group, lightest = lowest fifth of block groups, darkest = highest fifth. Shown alongside 1938 redlining on purpose -- toggle both to see how closely today's patterns still track the original grades. “% Black or African American” is shown (not a general “race” composite) because that's the specific dimension HOLC grading discriminated on. Source: US Census Bureau ACS 5-year estimates.",
+    rows: [
+      { node: "demo_race_black", label: "% Black or African American", ramp: ["#f7f7f7", "#cccccc", "#969696", "#636363", "#252525"], defaultOff: true },
+      { node: "demo_education", label: "% Bachelor's degree or higher", ramp: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"], defaultOff: true },
+      { node: "demo_labor_force", label: "Labor force participation", ramp: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"], defaultOff: true },
+      { node: "demo_income", label: "Median household income", ramp: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"], defaultOff: true },
+      { node: "demo_homeownership", label: "Homeownership rate", ramp: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"], defaultOff: true },
+    ],
+  },
 ];
 
 // buildings are colored via per-vertex COLOR_0 data (each face's real
@@ -785,10 +813,11 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
       // matte, fully diffuse response so the vertex colors actually pop.
       obj.material.metalness = 0;
       obj.material.roughness = 0.85;
-      // The redlining overlay floats 25mm above the buildings/terrain --
-      // translucency is what reads it as "a layer laid on top of today's
-      // map" rather than a replacement for it. See docs/OVERLAYS.md.
-      if (obj.name && obj.name.startsWith("redlining_")) {
+      // Floating data overlays (redlining, demographics) sit 25mm above the
+      // buildings/terrain -- translucency is what reads them as "a layer
+      // laid on top of today's map" rather than a replacement for it. See
+      // docs/OVERLAYS.md.
+      if (obj.name && (obj.name.startsWith("redlining_") || obj.name.startsWith("demo_"))) {
         obj.material.transparent = true;
         obj.material.opacity = 0.5;
         obj.material.depthWrite = false;
@@ -932,9 +961,20 @@ function buildLegend(categoryMeshes) {
       } else {
         const swatchTag = row.building && mesh ? "button" : "span";
         const swatchAttrs = row.building && mesh ? `type="button" title="Click to un-highlight (grey out) this category"` : "";
+        // demographic overlay rows pass a 5-color `ramp` (continuous data)
+        // instead of one fixed `color` -- render a mini gradient strip.
+        const swatchHtml = row.ramp
+          ? `<span class="ramp-swatch">${row.ramp.map(c => `<span style="background:${c}"></span>`).join("")}</span>`
+          : `<${swatchTag} class="swatch" style="background:${row.color}" ${swatchAttrs}></${swatchTag}>`;
+        // demographic rows default OFF (row.defaultOff) -- 5 variables plus
+        // redlining all showing at once by default is an unreadable muddy
+        // stack of translucent washes, and defeats the actual point of the
+        // feature (compare ONE variable against redlining at a time, per
+        // this section's own note text above).
+        const startChecked = !row.defaultOff;
         rowEl.innerHTML =
-          `<input type="checkbox" id="${id}" checked>` +
-          `<${swatchTag} class="swatch" style="background:${row.color}" ${swatchAttrs}></${swatchTag}>` +
+          `<input type="checkbox" id="${id}"${startChecked ? " checked" : ""}>` +
+          swatchHtml +
           `<label for="${id}" class="legend-label">${row.label}${countSpan}</label>`;
         const checkbox = rowEl.querySelector("input");
         const swatch = rowEl.querySelector(".swatch");
@@ -945,6 +985,8 @@ function buildLegend(categoryMeshes) {
           rowEl.querySelector(".legend-label").classList.add("no-toggle");
           rowEl.title = "Nothing in this category in the current model";
         } else {
+          mesh.visible = startChecked;
+          rowEl.classList.toggle("hidden-category", !startChecked);
           checkbox.addEventListener("change", () => {
             mesh.visible = checkbox.checked;
             rowEl.classList.toggle("hidden-category", !checkbox.checked);
