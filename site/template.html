@@ -299,6 +299,70 @@
     font-size: 0.68rem;
   }
 
+  /* ---------- touch controls: hidden by default, shown only on a coarse
+     (touch) primary pointer -- desktop already has WASD/drag/scroll and
+     doesn't need an on-screen joystick cluttering the view. ---------- */
+  #touch-controls {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    pointer-events: none; /* only the joystick/buttons themselves are interactive */
+  }
+  @media (pointer: coarse) {
+    #touch-controls { display: block; }
+  }
+  #touch-joystick {
+    position: absolute;
+    left: 1.4rem;
+    bottom: 1.4rem;
+    width: 6.5rem;
+    height: 6.5rem;
+    border-radius: 50%;
+    background: rgba(18,24,26,0.45);
+    border: 1.5px solid rgba(236,230,217,0.35);
+    pointer-events: auto;
+    touch-action: none;
+  }
+  #touch-joystick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 2.6rem;
+    height: 2.6rem;
+    margin: -1.3rem 0 0 -1.3rem;
+    border-radius: 50%;
+    background: rgba(236,230,217,0.55);
+    border: 1.5px solid rgba(18,24,26,0.4);
+    pointer-events: none;
+    transition: background 0.1s ease;
+  }
+  #touch-joystick.active #touch-joystick-knob {
+    background: var(--brass-bright);
+  }
+  #touch-vertical {
+    position: absolute;
+    right: 1.4rem;
+    bottom: 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    pointer-events: auto;
+  }
+  #touch-vertical button {
+    width: 2.9rem;
+    height: 2.9rem;
+    border-radius: 50%;
+    background: rgba(18,24,26,0.45);
+    border: 1.5px solid rgba(236,230,217,0.35);
+    color: var(--paper);
+    font-size: 1.1rem;
+    touch-action: none;
+  }
+  #touch-vertical button:active {
+    background: rgba(212,172,94,0.45);
+  }
+
   /* ---------- viewer ---------- */
   #viewer-container {
     position: absolute;
@@ -438,6 +502,14 @@
     #panel { width: 100vw; max-width: 100vw; }
     #panel-toggle { right: 100vw; }
     #panel.collapsed ~ #panel-toggle { right: 0; }
+    /* the title + subtitle sit side-by-side (flex, baseline) by default,
+       which is fine at desktop widths but wraps into an ugly two-line
+       collision with the "Index" button on a phone -- stack them instead
+       and shrink the title so the whole header stays out of the joystick/
+       button's way and doesn't cover as much of the map. */
+    #topbar { flex-direction: column; align-items: flex-start; gap: 0.1rem; padding: 0.6rem 0.8rem; max-width: calc(100vw - 5.5rem); }
+    #topbar h1 { font-size: 0.92rem; }
+    #topbar .sub { font-size: 0.68rem; }
   }
 </style>
 
@@ -471,6 +543,22 @@
       <kbd>W A S D</kbd> move &nbsp; <kbd>drag</kbd> look &nbsp; <kbd>Q E</kbd> down/up &nbsp; <kbd>shift</kbd> boost
     </div>
   </aside>
+
+  <!-- Touch controls: only shown on coarse-pointer (touch) devices, via the
+       @media (pointer: coarse) rule below -- an FPS-game-style virtual
+       joystick for movement (drag from center, push to the edge for a speed
+       boost -- no separate boost button needed) plus small altitude
+       buttons. Pinch-to-zoom (handled entirely in JS, no dedicated markup)
+       covers forward/back the same way the desktop scroll-wheel does. -->
+  <div id="touch-controls" aria-hidden="true">
+    <div id="touch-joystick">
+      <div id="touch-joystick-knob"></div>
+    </div>
+    <div id="touch-vertical">
+      <button id="touch-up" aria-label="Fly up" type="button">▲</button>
+      <button id="touch-down" aria-label="Fly down" type="button">▼</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1106,13 +1194,56 @@ const keys = new Set();
 window.addEventListener("keydown", (e) => { keys.add(e.code); });
 window.addEventListener("keyup", (e) => { keys.delete(e.code); });
 
-let dragging = false, lastX = 0, lastY = 0;
+// Look-drag is scoped to ONE specific pointerId (not a plain boolean) so it
+// keeps tracking the same finger correctly even while a second finger is
+// simultaneously operating the touch joystick elsewhere on screen -- a
+// boolean flag would get its lastX/lastY corrupted by the other finger's
+// unrelated pointermove events. activePointers tracks every finger currently
+// down ON THE CANVAS (the joystick/altitude buttons are separate overlay
+// elements and never reach this listener at all, by normal DOM hit-testing)
+// -- a second canvas finger switches from look-drag to pinch-to-zoom.
+let dragPointerId = null, lastX = 0, lastY = 0;
+const activePointers = new Map(); // pointerId -> {x, y}, canvas touches only
+let pinchStartDist = null;
+
 renderer.domElement.addEventListener("pointerdown", (e) => {
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 1) {
+    dragPointerId = e.pointerId;
+    lastX = e.clientX; lastY = e.clientY;
+  } else if (activePointers.size === 2) {
+    dragPointerId = null; // second finger down: this is a pinch, not a look-drag
+    const [a, b] = [...activePointers.values()];
+    pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
+  }
 });
-window.addEventListener("pointerup", () => { dragging = false; });
+function releasePointer(e) {
+  activePointers.delete(e.pointerId);
+  if (e.pointerId === dragPointerId) dragPointerId = null;
+  if (activePointers.size < 2) pinchStartDist = null;
+}
+window.addEventListener("pointerup", releasePointer);
+window.addEventListener("pointercancel", releasePointer);
 window.addEventListener("pointermove", (e) => {
-  if (!dragging) return;
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (activePointers.size >= 2) {
+    // pinch-to-zoom: same forward/back dolly the desktop scroll-wheel does,
+    // driven by the CHANGE in finger-to-finger distance each frame rather
+    // than the absolute distance.
+    const [a, b] = [...activePointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchStartDist !== null) {
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      camera.position.addScaledVector(dir, (dist - pinchStartDist) * 1.2);
+    }
+    pinchStartDist = dist;
+    return;
+  }
+
+  if (e.pointerId !== dragPointerId) return;
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
   yaw -= dx * 0.0035;
@@ -1125,6 +1256,76 @@ renderer.domElement.addEventListener("wheel", (e) => {
   camera.getWorldDirection(dir);
   camera.position.addScaledVector(dir, -e.deltaY * 0.6);
 }, { passive: false });
+
+// ---- touch joystick (movement) + altitude buttons -- see #touch-controls
+// in the HTML; CSS-hidden entirely on non-touch (pointer: fine) devices.
+// Magnitude-based speed instead of a separate boost button/toggle: push the
+// knob to the edge for a fast run, a light touch for a slow walk -- reads
+// naturally FPS-game-like, and updateMovement() below just multiplies
+// touchMoveX/Y by speed like it already does for the keyboard's unit
+// vectors, so a full-deflection stick (magnitude 1) matches un-boosted
+// keyboard speed and BOOST_MULTIPLIER is reused for the top of the range. ----
+let touchMoveX = 0, touchMoveY = 0, touchMoveMag = 0;
+let touchVertical = 0;
+
+const joystickEl = document.getElementById("touch-joystick");
+const joystickKnob = document.getElementById("touch-joystick-knob");
+const JOYSTICK_RADIUS = 46; // px -- half of #touch-joystick's CSS width (6.5rem @ 16px/rem / 2 - knob margin, close enough to the knob's actual travel)
+let joystickPointerId = null;
+
+function joystickApply(e) {
+  const rect = joystickEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  const rawDx = e.clientX - cx, rawDy = e.clientY - cy;
+  const rawDist = Math.hypot(rawDx, rawDy);
+  const dist = Math.min(JOYSTICK_RADIUS, rawDist);
+  const angle = Math.atan2(rawDy, rawDx);
+  const dx = Math.cos(angle) * dist, dy = Math.sin(angle) * dist;
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  touchMoveMag = dist / JOYSTICK_RADIUS;
+  touchMoveX = touchMoveMag > 0.05 ? (dx / dist) * touchMoveMag : 0;
+  touchMoveY = touchMoveMag > 0.05 ? -(dy / dist) * touchMoveMag : 0; // screen-up = forward
+}
+function joystickReset() {
+  joystickEl.classList.remove("active");
+  joystickKnob.style.transform = "translate(0px, 0px)";
+  touchMoveX = 0; touchMoveY = 0; touchMoveMag = 0;
+}
+joystickEl.addEventListener("pointerdown", (e) => {
+  e.stopPropagation();
+  joystickPointerId = e.pointerId;
+  // best-effort: keeps tracking if the finger slides outside the visual
+  // joystick bounds. Not essential -- pointermove is also bound directly on
+  // joystickEl and still fires for drags that stay roughly on top of it, so
+  // don't let a capture failure (some browser/OS combos throw here) abort
+  // the rest of this handler and silently drop the touch entirely.
+  try { joystickEl.setPointerCapture(e.pointerId); } catch {}
+  joystickEl.classList.add("active");
+  joystickApply(e);
+});
+joystickEl.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== joystickPointerId) return;
+  joystickApply(e);
+});
+function joystickEnd(e) {
+  if (e.pointerId !== joystickPointerId) return;
+  joystickPointerId = null;
+  joystickReset();
+}
+joystickEl.addEventListener("pointerup", joystickEnd);
+joystickEl.addEventListener("pointercancel", joystickEnd);
+
+function bindHoldButton(el, onDown, onUp) {
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    onDown();
+  });
+  el.addEventListener("pointerup", onUp);
+  el.addEventListener("pointercancel", onUp);
+}
+bindHoldButton(document.getElementById("touch-up"), () => { touchVertical = 1; }, () => { touchVertical = 0; });
+bindHoldButton(document.getElementById("touch-down"), () => { touchVertical = -1; }, () => { touchVertical = 0; });
 
 const MOVE_SPEED = 220; // mm/sec (this model's local unit), matches the ~900mm-wide disk
 const BOOST_MULTIPLIER = 3;
@@ -1150,6 +1351,13 @@ function clampToSurface() {
 function updateMovement(dt) {
   let speed = MOVE_SPEED * dt;
   if (keys.has("ShiftLeft") || keys.has("ShiftRight")) speed *= BOOST_MULTIPLIER;
+  // touch joystick: how far the stick is pushed (0-1) scales speed up toward
+  // BOOST_MULTIPLIER instead of needing a separate boost button -- a light
+  // touch walks, pushing to the edge runs. The move vector below gets
+  // re-normalized to a pure direction regardless of magnitude (same as the
+  // keyboard's unit-vector contributions always have), so this speed
+  // multiplier is the only place touchMoveMag actually matters.
+  if (touchMoveMag > 0.05) speed *= 1 + touchMoveMag * (BOOST_MULTIPLIER - 1);
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
   forward.y = 0;
@@ -1162,6 +1370,11 @@ function updateMovement(dt) {
   if (keys.has("KeyA")) move.sub(right);
   if (keys.has("KeyE")) move.y += 1;
   if (keys.has("KeyQ")) move.y -= 1;
+  if (touchMoveMag > 0.05) {
+    move.addScaledVector(forward, touchMoveY);
+    move.addScaledVector(right, touchMoveX);
+  }
+  move.y += touchVertical;
   if (move.lengthSq() > 0) {
     move.normalize().multiplyScalar(speed);
     // don't walk/fly through a wall or building: raycast along the proposed
@@ -1256,6 +1469,20 @@ panelToggle.addEventListener("click", () => {
   panelToggle.classList.toggle("collapsed", collapsed);
   panelToggle.setAttribute("aria-expanded", String(!collapsed));
 });
+
+// On a touch device the legend panel (100vw at this width, see the
+// @media(max-width:640px) rule) would otherwise cover the ENTIRE screen on
+// first load, hiding the map before anyone's seen it -- start collapsed
+// there instead, and swap the keyboard-shortcut hint for a touch-control one
+// (the on-screen joystick/buttons are visible either way and mostly
+// self-explanatory, but forward/back via pinch isn't obvious at a glance).
+if (window.matchMedia("(pointer: coarse)").matches) {
+  panel.classList.add("collapsed");
+  panelToggle.classList.add("collapsed");
+  panelToggle.setAttribute("aria-expanded", "false");
+  document.getElementById("controls-hint").textContent =
+    "Drag joystick to move (push to edge to run) — drag screen to look — ▲▼ altitude — pinch to zoom";
+}
 
 // ---- render loop ----
 let lastFrameTime = performance.now();
