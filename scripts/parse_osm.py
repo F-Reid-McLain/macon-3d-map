@@ -122,7 +122,7 @@ for wid, way in ways.items():
     if len(coords) < 2:
         continue
     road_rows.append({"id": wid, "class": hw, "name": tags.get("name", ""),
-                       "geometry": LineString(coords)})
+                       "ref": tags.get("ref", ""), "geometry": LineString(coords)})
 roads = gpd.GeoDataFrame(road_rows, crs="EPSG:4326")
 print(f"roads: {len(roads)}")
 

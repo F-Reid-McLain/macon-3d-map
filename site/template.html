@@ -356,6 +356,20 @@
   .place-label.tier-neighbourhood { font-size: 0.68rem; color: var(--paper-dim); }
   .place-label.tier-industrial { font-size: 0.72rem; color: var(--brass-bright); text-transform: uppercase; letter-spacing: 0.05em; }
   .place-label.tier-hamlet { font-size: 0.62rem; color: var(--paper-dim); font-weight: 400; }
+  /* highway routes get a shield-badge look (pill background + border) instead
+     of plain floating text, so they read as wayfinding, not a place name. */
+  .place-label.tier-highway {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--paper);
+    background: var(--clay);
+    border: 1px solid rgba(236,230,217,0.55);
+    border-radius: 10px;
+    padding: 0.1rem 0.5rem;
+    text-shadow: none;
+    box-shadow: 0 1px 4px rgba(18,24,26,0.6);
+  }
 
   /* ---------- loading overlay ---------- */
   #loading {
@@ -563,6 +577,7 @@ const LABELS = __LABELS_JSON__;
 // otherwise ~175 labels would carpet the screen at a county-wide view.
 // fadeStart/fadeEnd give a smooth opacity ramp rather than a hard pop.
 const PLACE_LABEL_TIERS = {
+  highway: { fadeStart: 2800, fadeEnd: 1800 },
   industrial: { fadeStart: 2200, fadeEnd: 1500 },
   neighbourhood: { fadeStart: 1100, fadeEnd: 500 },
   hamlet: { fadeStart: 550, fadeEnd: 250 },
@@ -966,7 +981,7 @@ function buildLegend(categoryMeshes) {
   const desc = document.createElement("p");
   desc.className = "desc";
   desc.style.marginBottom = "0";
-  desc.textContent = "Neighborhoods, industrial areas, and smaller communities fade in as you fly closer — industrial areas (amber, small caps) are visible from farthest away, neighborhoods at medium range, and smaller communities only up close.";
+  desc.textContent = "Highway routes (red shield badges), neighborhoods, industrial areas, and smaller communities fade in as you fly closer — highways and industrial areas (amber, small caps) are visible from farthest away, neighborhoods at medium range, and smaller communities only up close.";
   rowsEl.appendChild(desc);
 }
 
