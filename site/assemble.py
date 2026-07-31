@@ -56,6 +56,11 @@ html = html.replace("__THREE_MESH_BVH_B64__", b64_file("site/three-mesh-bvh.js")
 print("inlining landmarks json...")
 html = html.replace("__LANDMARKS_JSON__", json.dumps(LANDMARKS))
 
+print("inlining place labels json...")
+with open("output/labels.json") as f:
+    LABELS = json.load(f)
+html = html.replace("__LABELS_JSON__", json.dumps(LABELS))
+
 print("inlining draco decoder files...")
 html = html.replace("__DRACO_DECODER_JS_B64__", b64_file("site/draco_decoder.js"))
 html = html.replace("__DRACO_WASM_WRAPPER_JS_B64__", b64_file("site/draco_wasm_wrapper.js"))

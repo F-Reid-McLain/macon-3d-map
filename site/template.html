@@ -293,6 +293,26 @@
     opacity: 1;
   }
 
+  /* ---------- place labels: neighborhoods, hamlets, industrial areas.
+     Plain text, no dot/button chrome, not interactive -- pure map dressing,
+     faded in/out by camera distance (see PLACE_LABEL_TIERS in the module
+     script) rather than always shown, since there are ~175 of them and
+     showing all at once at a county-wide view would be unreadable. ---------- */
+  .place-label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    color: var(--paper);
+    text-shadow: 0 1px 3px rgba(18,24,26,0.9), 0 0 6px rgba(18,24,26,0.6);
+    white-space: nowrap;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    transition: opacity 0.25s ease;
+  }
+  .place-label.tier-neighbourhood { font-size: 0.68rem; color: var(--paper-dim); }
+  .place-label.tier-industrial { font-size: 0.72rem; color: var(--brass-bright); text-transform: uppercase; letter-spacing: 0.05em; }
+  .place-label.tier-hamlet { font-size: 0.62rem; color: var(--paper-dim); font-weight: 400; }
+
   /* ---------- loading overlay ---------- */
   #loading {
     position: absolute;
@@ -336,7 +356,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    #panel, .hotspot .dot, .hotspot .label, #loading { transition: none; }
+    #panel, .hotspot .dot, .hotspot .label, .place-label, #loading { transition: none; }
   }
 
   @media (max-width: 640px) {
@@ -381,6 +401,8 @@
       <div class="legend-row"><span class="swatch" style="background:#9690a7"></span>Parking lots</div>
       <div class="legend-row"><span class="swatch" style="background:#4678c8"></span>Water</div>
       <div class="legend-row"><span class="swatch" style="background:#5aa05a"></span>Terrain (2.5x exaggerated)</div>
+      <p class="desc" style="margin:0.75rem 0 0.25rem">Place labels</p>
+      <p class="desc" style="margin-bottom:0">Neighborhoods, industrial areas, and smaller communities fade in as you fly closer — industrial areas (amber, small caps) are visible from farthest away, neighborhoods at medium range, and smaller communities only up close.</p>
 
       <h2>Landmark index</h2>
       <p class="desc" style="margin-bottom:0.5rem">Click any building to fly the camera to it. Real elevation data — <a href="#" id="reset-view-link" class="mono" style="color:var(--brass-bright)">reset view</a>.</p>
@@ -471,6 +493,19 @@ THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 const LANDMARKS = __LANDMARKS_JSON__;
+const LABELS = __LABELS_JSON__;
+
+// Per-tier fade distance (this model's local mm-scale unit -- the full
+// county disk spans ~3000 units, see build_grid.py's MM_PER_M). Industrial
+// areas are the sparsest and most useful to spot from far away; hamlets are
+// the most numerous and least distinctive, so they only appear up close --
+// otherwise ~175 labels would carpet the screen at a county-wide view.
+// fadeStart/fadeEnd give a smooth opacity ramp rather than a hard pop.
+const PLACE_LABEL_TIERS = {
+  industrial: { fadeStart: 2200, fadeEnd: 1500 },
+  neighbourhood: { fadeStart: 1100, fadeEnd: 500 },
+  hamlet: { fadeStart: 550, fadeEnd: 250 },
+};
 
 const CATEGORY_LABEL = {
   hospital: "Hospitals",
@@ -564,7 +599,7 @@ scene.add(sun);
 const modelGroup = new THREE.Group();
 modelGroup.rotation.x = -Math.PI / 2;
 scene.add(modelGroup);
-window.__debug = { THREE, scene, camera, renderer, modelGroup };
+window.__debug = { THREE, scene, camera, renderer, modelGroup, LABELS, PLACE_LABEL_TIERS };
 
 // ---- load model: GLTFLoader.parse() takes an ArrayBuffer directly, so the
 // embedded model bytes go straight in without ever touching fetch() or a
@@ -599,6 +634,7 @@ const modelBuffer = b64ToArrayBuffer("__MODEL_DATA_B64__");
 log(`model decoded, ${(modelBuffer.byteLength / 1e6).toFixed(2)}MB -- parsing glTF...`);
 
 let hotspotEls = null;
+let placeLabelEls = null;
 
 gltfLoader.parse(modelBuffer, "", (gltf) => {
   log("glTF parsed OK -- scene ready");
@@ -619,6 +655,7 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
   });
   modelGroup.add(gltf.scene);
   hotspotEls = buildHotspots();
+  placeLabelEls = buildPlaceLabels();
   frameDefaultView();
   loadingEl.classList.add("hidden");
   requestAnimationFrame(animate);
@@ -699,6 +736,48 @@ function updateHotspotScreenPositions() {
     el.style.display = "";
     el.style.left = (v.x * halfW + halfW) + "px";
     el.style.top = (-v.y * halfH + halfH) + "px";
+  }
+}
+
+// ---- place labels: neighborhoods/hamlets/industrial areas. Same
+// world-position-once, project-every-frame pattern as hotspots above, but
+// plain non-interactive text with a per-tier camera-distance fade instead
+// of always-on. ----
+function buildPlaceLabels() {
+  const els = [];
+  for (const lb of LABELS) {
+    const el = document.createElement("div");
+    el.className = "place-label tier-" + lb.tier;
+    el.textContent = lb.name;
+    container.appendChild(el);
+    const worldPos = new THREE.Vector3(lb.x, lb.y, lb.z);
+    modelGroup.localToWorld(worldPos);
+    els.push({ el, worldPos, tier: PLACE_LABEL_TIERS[lb.tier] });
+  }
+  return els;
+}
+
+function updatePlaceLabelPositions() {
+  if (!placeLabelEls) return;
+  const halfW = window.innerWidth / 2, halfH = window.innerHeight / 2;
+  const v = new THREE.Vector3();
+  for (const { el, worldPos, tier } of placeLabelEls) {
+    const dist = camera.position.distanceTo(worldPos);
+    if (dist > tier.fadeStart) {
+      el.style.display = "none";
+      continue;
+    }
+    v.copy(worldPos).project(camera);
+    if (v.z > 1 || v.x < -1.2 || v.x > 1.2 || v.y < -1.2 || v.y > 1.2) {
+      el.style.display = "none";
+      continue;
+    }
+    el.style.display = "";
+    el.style.left = (v.x * halfW + halfW) + "px";
+    el.style.top = (-v.y * halfH + halfH) + "px";
+    el.style.opacity = dist > tier.fadeEnd
+      ? String(1 - (dist - tier.fadeEnd) / (tier.fadeStart - tier.fadeEnd))
+      : "1";
   }
 }
 
@@ -886,6 +965,7 @@ function animate(now) {
   }
 
   updateHotspotScreenPositions();
+  updatePlaceLabelPositions();
   renderer.render(scene, camera);
 }
 </script>
