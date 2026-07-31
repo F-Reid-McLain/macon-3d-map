@@ -99,6 +99,19 @@ CATEGORIES = [
 
 DECAL_HEIGHT_MM = 0.12
 DECAL_LIFT_MM = 0.03  # clears the decal off the terrain surface it sits on -- avoids z-fighting
+
+# Real-world road widths (meters) by OSM class, used for the road decal --
+# was a single flat 3.0mm (37.5 real meters!) for every road regardless of
+# class, which read as one giant blobby mass. Combined with flat caps/mitre
+# joins (not shapely's default round) at the buffer() call site, this keeps
+# bends from tessellating into fat circular bulges too.
+ROAD_WIDTH_M = {
+    "motorway": 16, "trunk": 16, "primary": 14,
+    "motorway_link": 10, "trunk_link": 10, "primary_link": 10,
+    "secondary": 11, "tertiary": 9,
+    "secondary_link": 8, "tertiary_link": 8,
+}
+ROAD_WIDTH_DEFAULT_M = 6  # residential/service/unclassified/living_street/road/track
 REDLINING_LIFT_MM = 25.0  # clears typical rooftops (tallest building in this model is ~21mm) -- these
                            # are neighborhood-scale historical boundaries, meant to read as a translucent
                            # wash hovering over an area regardless of what's built there today, not a
@@ -196,6 +209,32 @@ def category_color(cat):
     return COLORS[cat]
 
 
+def drape_polygon_mesh(poly_utm, ox, oy, lift_mm, color):
+    """Triangulate a shapely polygon (in UTM meters) and drape it onto the
+    real terrain surface -- each VERTEX gets its own sampled height instead
+    of extruding the whole shape flat at one representative height, which
+    floats above dips / clips through rises wherever a shape spans more
+    elevation change than that one sample point captured (very visible on
+    Macon's real river bluff with the old flat-extruded road decal). Because
+    height comes from the same continuous terrain function at each vertex's
+    real (x,y), two separately-draped shapes that happen to share a boundary
+    point land on the identical height there too -- no visible seam between
+    them, without needing to actually be one merged mesh."""
+    verts2d, faces = trimesh.creation.triangulate_polygon(poly_utm, engine="earcut")
+    if len(faces) == 0:
+        return None
+    z_mm = bg.terrain_z_mm_batch(verts2d[:, 0], verts2d[:, 1]) + lift_mm
+    x_mm = (verts2d[:, 0] - ox) * bg.MM_PER_M
+    y_mm = (verts2d[:, 1] - oy) * bg.MM_PER_M
+    mesh = trimesh.Trimesh(vertices=np.column_stack([x_mm, y_mm, z_mm]), faces=faces, process=False)
+    # earcut's vertex winding isn't guaranteed to face +z -- flip if the
+    # average face normal points down instead of up.
+    if mesh.face_normals[:, 2].mean() < 0:
+        mesh.faces = mesh.faces[:, ::-1]
+    mesh.visual.face_colors = color
+    return mesh
+
+
 def build_colored_tile(tile_name, clip_shape_m):
     """Returns {category_name: mesh} for whichever categories have any
     geometry in this tile (categories with nothing here are simply absent
@@ -252,41 +291,42 @@ def build_colored_tile(tile_name, clip_shape_m):
     plate_mesh, (ox, oy) = bg.build_terrain_base(plate_clip_m)
     xf = lambda g: affine_transform(g, [bg.MM_PER_M, 0, 0, bg.MM_PER_M, -ox * bg.MM_PER_M, -oy * bg.MM_PER_M])
 
-    # ---- roads: thin decal prisms extruded from the road network's own
-    # shape (not spatial classification against terrain faces). Width is a
-    # real paint-stroke width now, not tuned around terrain grid cell size
-    # like the old classification approach needed.
+    # ---- roads: thin decal DRAPED onto the real terrain (see
+    # drape_polygon_mesh) instead of extruded flat at one sampled height --
+    # the flat-extrude version floated above dips / clipped through rises
+    # wherever a merged road shape spanned more elevation change than its
+    # one height sample captured, very visible on Macon's real river bluff.
+    # Draping means per-vertex height comes from a continuous function, so
+    # it's now safe to union the WHOLE tile's road network into as few
+    # disjoint shapes as possible for face-count efficiency (like before)
+    # without that costing terrain-following accuracy the way it used to --
+    # extruding each segment separately instead measured 1.08M faces for
+    # just 3 tiles' worth of roads, more than the entire terrain mesh for
+    # the same area, from the fixed top+bottom+wall overhead every separate
+    # extrude_polygon() call pays.
     #
-    # UNION the ribbons in UTM space FIRST, before extruding -- extruding
-    # each individual road segment's ribbon separately (as a first pass did)
-    # measured 1.08M faces for just 3 tiles' worth of roads, more than the
-    # ENTIRE terrain mesh for the same area, because adjacent/crossing
-    # streets' buffered ribbons overlap heavily at every intersection and
-    # each tiny segment pays the fixed top+bottom+wall-triangle overhead of
-    # its own separate extrude_polygon() call. Unioning first collapses all
-    # that overlap into one clean shape (or a few disjoint clusters) and
-    # extrudes each ONCE. Height is sampled per resulting disjoint cluster's
-    # own centroid (not one height for the whole tile), so hilly terrain
-    # still gets reasonable per-area accuracy despite the merge. ----
-    ROAD_PAINT_WIDTH_MM = 3.0
-    road_width_m = ROAD_PAINT_WIDTH_MM / bg.MM_PER_M
-    road_ribbons_utm = [line_utm.buffer(road_width_m / 2) for line_utm in r["geometry"]
-                         if not line_utm.is_empty and line_utm.length > 0]
+    # Width is tiered by real OSM road class (ROAD_WIDTH_M) instead of one
+    # flat value for every road regardless of class, and the buffer uses
+    # flat caps + mitre joins (not shapely's default round) so bends don't
+    # tessellate into fat circular bulges. ----
+    road_ribbons_utm = []
+    for line_utm, road_class in zip(r["geometry"], r["class"]):
+        if line_utm.is_empty or line_utm.length == 0:
+            continue
+        width_m = ROAD_WIDTH_M.get(road_class, ROAD_WIDTH_DEFAULT_M)
+        road_ribbons_utm.append(line_utm.buffer(width_m / 2, cap_style="flat", join_style="mitre"))
     road_union_utm = unary_union(road_ribbons_utm) if road_ribbons_utm else None
     if road_union_utm is not None and not road_union_utm.is_empty:
         clusters = road_union_utm.geoms if isinstance(road_union_utm, BaseMultipartGeometry) else [road_union_utm]
         for cluster_utm in clusters:
             if cluster_utm.is_empty or cluster_utm.area <= 0:
                 continue
-            tz = bg.terrain_z_mm(cluster_utm.centroid.x, cluster_utm.centroid.y)
-            part_local = xf(cluster_utm)
             try:
-                decal = trimesh.creation.extrude_polygon(part_local, height=DECAL_HEIGHT_MM, engine="earcut")
+                decal = drape_polygon_mesh(cluster_utm, ox, oy, DECAL_LIFT_MM, COLORS["road"])
             except Exception:
                 continue
-            decal.apply_translation([0, 0, tz + DECAL_LIFT_MM])
-            decal.visual.face_colors = COLORS["road"]
-            result["road"].append(decal)
+            if decal is not None:
+                result["road"].append(decal)
 
     # ---- water: keep the real geometric recess cut into the terrain (a
     # genuine depression looks better than a flat decal alone), but color it

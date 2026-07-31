@@ -114,6 +114,17 @@ def terrain_z_mm(x, y):
     return BASE_THICKNESS_MM + (elevation_at(x, y) - ELEV_MIN) * TERRAIN_MM_PER_M
 
 
+def terrain_z_mm_batch(xs, ys):
+    """Vectorized terrain_z_mm for arrays of UTM (x,y) -- used to drape decal
+    geometry (e.g. road ribbons) per-VERTEX instead of extruding it flat at
+    one sampled height, which floats/sinks relative to real terrain wherever
+    the shape spans more elevation change than that one sample captured."""
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    elev = _terrain_interp(np.column_stack([ys, xs]))
+    return BASE_THICKNESS_MM + (elev - ELEV_MIN) * TERRAIN_MM_PER_M
+
+
 # ---- build the tile grid: keep squares whose intersection with the county is non-trivial ----
 n_i = int(np.ceil(max(CX - _cminx, _cmaxx - CX) / TILE_SIZE_M)) + 1
 n_j = int(np.ceil(max(CY - _cminy, _cmaxy - CY) / TILE_SIZE_M)) + 1
