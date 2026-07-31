@@ -591,10 +591,18 @@ if __name__ == "__main__":
         all_by_category[node].append(mesh)
         print(f"  {node}: {len(mesh.faces)} faces")
 
-    print("\nbuilding demographics overlays (not tiled -- 136 block groups total) ...")
-    for node, mesh in build_demographics_layers().items():
-        all_by_category[node].append(mesh)
-        print(f"  {node}: {len(mesh.faces)} faces")
+    # SKIP_DEMOGRAPHICS_OVERLAY lets the mobile build (see build_mobile.sh)
+    # drop these entirely -- they default to hidden (site/template.html's
+    # LEGEND_SECTIONS `defaultOff: true`), but Three.js keeps hidden geometry
+    # fully resident in GPU memory regardless, so on a memory-constrained
+    # device they cost real memory for zero visible benefit on first load.
+    if os.environ.get("SKIP_DEMOGRAPHICS_OVERLAY") != "1":
+        print("\nbuilding demographics overlays (not tiled -- 136 block groups total) ...")
+        for node, mesh in build_demographics_layers().items():
+            all_by_category[node].append(mesh)
+            print(f"  {node}: {len(mesh.faces)} faces")
+    else:
+        print("\nSKIP_DEMOGRAPHICS_OVERLAY=1 -- omitting demographics overlays from this build")
 
     print(f"\n{n_tiles_built}/{len(bg.tiles)} tiles had content; merging per category ...")
     scene = trimesh.Scene()
