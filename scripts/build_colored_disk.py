@@ -73,6 +73,19 @@ ZONING_CATEGORY_COLORS = {
     "other": [190, 190, 190, 255],
 }
 
+# 1930s HOLC redlining grades -- see scripts/fetch_redlining.py and
+# docs/OVERLAYS.md for the data source, license, and context. Colors are the
+# dataset's own "fill" field, which is itself the traditional HOLC scheme
+# (green/blue/yellow/red) -- kept as-is rather than re-picking colors, since
+# that scheme is what makes a redlining map immediately recognizable as one.
+REDLINING_COLORS = {
+    "redlining_a": [118, 168, 101, 255],  # "Best" -- #76a865
+    "redlining_b": [124, 181, 189, 255],  # "Still Desirable" -- #7cb5bd
+    "redlining_c": [255, 255, 0, 255],    # "Definitely Declining" -- #ffff00
+    "redlining_d": [217, 131, 141, 255],  # "Hazardous" (i.e. redlined) -- #d9838d
+}
+REDLINING_GRADE_TO_NODE = {"A": "redlining_a", "B": "redlining_b", "C": "redlining_c", "D": "redlining_d"}
+
 # Every node name that ends up in the exported Scene, in legend order -- also
 # the exact set of names site/template.html looks for when wiring up toggle
 # checkboxes. "terrain" is deliberately NOT toggleable in the UI (hiding the
@@ -81,10 +94,15 @@ CATEGORIES = [
     "terrain", "water", "road", "parking",
     "hospital", "government", "mercer", "landmark",
     "residential", "commercial", "industrial", "agricultural", "other", "unclassified",
+    "redlining_a", "redlining_b", "redlining_c", "redlining_d",
 ]
 
 DECAL_HEIGHT_MM = 0.12
 DECAL_LIFT_MM = 0.03  # clears the decal off the terrain surface it sits on -- avoids z-fighting
+REDLINING_LIFT_MM = 25.0  # clears typical rooftops (tallest building in this model is ~21mm) -- these
+                           # are neighborhood-scale historical boundaries, meant to read as a translucent
+                           # wash hovering over an area regardless of what's built there today, not a
+                           # ground-hugging decal like roads/water/parking.
 
 
 def classify_zoning(code):
@@ -373,6 +391,51 @@ def build_colored_tile(tile_name, clip_shape_m):
     return tile_result
 
 
+def build_redlining_layer():
+    """Returns {redlining_a/b/c/d: mesh} for whichever grades are present.
+    Unlike everything else in this file, this isn't processed per-tile
+    (bg.tiles) -- there are only 40 polygons total for the whole county, so
+    one pass over the raw data is simpler and plenty fast. Each polygon
+    becomes its own thin decal floating REDLINING_LIFT_MM above the local
+    terrain height at its centroid (see that constant's comment), grouped by
+    letter grade into one mesh per grade so each is independently
+    toggleable in the legend."""
+    path = "data/redlining_raw.geojson"
+    if not os.path.exists(path):
+        print("no data/redlining_raw.geojson -- run scripts/fetch_redlining.py first; skipping this layer")
+        return {}
+
+    gdf = gpd.read_file(path).to_crs(bg.UTM_CRS)
+    by_grade = {node: [] for node in REDLINING_GRADE_TO_NODE.values()}
+    for _, row in gdf.iterrows():
+        node = REDLINING_GRADE_TO_NODE.get(row["grade"])
+        if node is None:
+            continue
+        geom_utm = row["geometry"]
+        if geom_utm.is_empty:
+            continue
+        tz = bg.terrain_z_mm(geom_utm.centroid.x, geom_utm.centroid.y) + REDLINING_LIFT_MM
+        geom_local = affine_transform(geom_utm, [bg.MM_PER_M, 0, 0, bg.MM_PER_M, -bg.CX * bg.MM_PER_M, -bg.CY * bg.MM_PER_M])
+        parts = geom_local.geoms if isinstance(geom_local, BaseMultipartGeometry) else [geom_local]
+        for part in parts:
+            if part.is_empty or part.area <= 0:
+                continue
+            try:
+                decal = trimesh.creation.extrude_polygon(part, height=DECAL_HEIGHT_MM, engine="earcut")
+            except Exception:
+                continue
+            decal.apply_translation([0, 0, tz])
+            decal.visual.face_colors = REDLINING_COLORS[node]
+            by_grade[node].append(decal)
+
+    result = {}
+    for node, decals in by_grade.items():
+        if not decals:
+            continue
+        result[node] = trimesh.util.concatenate(decals) if len(decals) > 1 else decals[0]
+    return result
+
+
 if __name__ == "__main__":
     os.makedirs("output/colored", exist_ok=True)
     all_by_category = {cat: [] for cat in CATEGORIES}
@@ -387,6 +450,11 @@ if __name__ == "__main__":
         for cat, mesh in tile_result.items():
             all_by_category[cat].append(mesh)
         print(f"  -> categories present: {sorted(tile_result.keys())}")
+
+    print("\nbuilding redlining overlay (not tiled -- 40 polygons total) ...")
+    for node, mesh in build_redlining_layer().items():
+        all_by_category[node].append(mesh)
+        print(f"  {node}: {len(mesh.faces)} faces")
 
     print(f"\n{n_tiles_built}/{len(bg.tiles)} tiles had content; merging per category ...")
     scene = trimesh.Scene()

@@ -607,6 +607,16 @@ const LEGEND_SECTIONS = [
     { node: "water", label: "Water", color: "#4678c8" },
     { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true },
   ] },
+  {
+    heading: "Historical redlining (1938 HOLC survey)",
+    note: "The federal Home Owners' Loan Corporation graded neighborhoods for mortgage risk in the 1930s -- “D”/red areas (majority-Black or immigrant neighborhoods, regardless of actual home values) were “redlined”: denied loans on that basis alone. Macon was among the most severely redlined cities in the country. Floats above the buildings as a translucent layer so it reads as an overlay, not a replacement for today's map. Source: University of Richmond's Mapping Inequality project (see the in-app credit at the bottom of this panel).",
+    rows: [
+      { node: "redlining_a", label: "“Best” (A)", color: "#76a865" },
+      { node: "redlining_b", label: "“Still Desirable” (B)", color: "#7cb5bd" },
+      { node: "redlining_c", label: "“Definitely Declining” (C)", color: "#ffff00" },
+      { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d" },
+    ],
+  },
 ];
 
 // buildings are colored via per-vertex COLOR_0 data (each face's real
@@ -754,6 +764,15 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
       // matte, fully diffuse response so the vertex colors actually pop.
       obj.material.metalness = 0;
       obj.material.roughness = 0.85;
+      // The redlining overlay floats 25mm above the buildings/terrain --
+      // translucency is what reads it as "a layer laid on top of today's
+      // map" rather than a replacement for it. See docs/OVERLAYS.md.
+      if (obj.name && obj.name.startsWith("redlining_")) {
+        obj.material.transparent = true;
+        obj.material.opacity = 0.5;
+        obj.material.depthWrite = false;
+        obj.castShadow = false;
+      }
       obj.geometry.computeBoundsTree();
       if (obj.name) categoryMeshes[obj.name] = obj;
     }
@@ -921,6 +940,13 @@ function buildLegend(categoryMeshes) {
         }
       }
       rowsEl.appendChild(rowEl);
+    }
+    if (section.note) {
+      const noteEl = document.createElement("p");
+      noteEl.className = "desc";
+      noteEl.style.margin = "0.4rem 0 0.5rem";
+      noteEl.textContent = section.note;
+      rowsEl.appendChild(noteEl);
     }
   }
   refreshHighlightLinkText();

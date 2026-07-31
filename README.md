@@ -9,11 +9,12 @@ An interactive, color-coded 3D relief map of all of Bibb County, Georgia (not ju
 - Real USGS terrain (2.5x vertically exaggerated), real building footprints (OpenStreetMap + Microsoft's Bing Maps building footprints, hybridized — ~92K buildings total, clipped to the real county polygon, not a circle), roads, water, and parking lots, all at a fixed 1:12,500 scale. Roads render flush with the terrain (no groove) — this version isn't for physical printing, unlike the sibling `macon-3d-print` repo.
 - Building heights: real OSM tags and Microsoft's own per-building height estimates where available (~34% of buildings), a neighborhood-aware zone heuristic elsewhere (see `scripts/assign_zones.py`) — not survey data for most buildings, but not a flat guess either.
 - Color-coded: hospitals (red), government/public buildings (blue), Mercer University (orange), and named landmarks (brass) always take priority; every other building is colored by its actual zoning parcel from Bibb County's tax assessor data (residential/commercial/industrial/agricultural/other), not left flat tan — see `scripts/fetch_zoning.py`/`build_colored_disk.py`'s `classify_zoning()`. Roads (grey), parking lots (lavender-grey), water (blue), terrain (green).
-- Every legend category (each building type, roads, parking, water, place labels) can be shown/hidden independently — click a row in the side panel. The model is exported as a multi-node scene specifically so this works (see `CLAUDE.md`).
+- Every legend category (each building type, roads, parking, water, place labels) can be shown/hidden independently — click a row in the side panel. The model is exported as a multi-node scene specifically so this works (see `CLAUDE.md`). Building categories also have a second, independent toggle: click a category's color swatch to grey it out ("un-highlight") without hiding it.
+- Data overlays: historical/statistical layers that float above the base map as their own toggleable section, distinct from the base map's own categories. First one: 1938 HOLC redlining grades (University of Richmond's Mapping Inequality project, CC BY-NC-SA 4.0 — see `docs/OVERLAYS.md` for the data source, license/citation, and how to add the next overlay).
 - Labeled: ~175 named neighborhoods, industrial areas, and smaller communities (from OpenStreetMap) float above the terrain and fade in by camera distance — industrial areas visible from farthest away, neighborhoods at medium range, smaller communities only up close — see `scripts/fetch_places.py`/`build_labels.py`.
 - A hand-rolled Three.js scene with a free-roam camera: **WASD** to move, **drag** to look around, **Q/E** for down/up, **shift** to boost speed, **scroll** to move forward/back. Pitch is clamped so you can never flip the view upside down.
 - Click any landmark in the side panel or on the model to smoothly fly the camera to it.
-- The whole page — geometry, colors, fonts, Three.js + GLTFLoader + DRACOLoader, and the Draco decoder — is base64-embedded directly into one HTML file via `site/assemble.py`, so the published page has zero external dependencies (this was a deliberate constraint: it needs to run inside strict CSPs that block any external network request, including `connect-src` restrictions that block even `blob:` URL fetches). Three.js/GLTFLoader/DRACOLoader are wired together via an import map with `data:` URIs — see `CLAUDE.md` for exactly how.
+- The whole page — geometry, colors, fonts, Three.js + GLTFLoader + DRACOLoader, and the Draco decoder — is base64-embedded directly into one HTML file via `site/assemble.py`, so the published page has zero external dependencies (this was a deliberate constraint: it needs to run inside strict CSPs that block any external network request, including `connect-src` restrictions that block even `blob:` URL fetches). Three.js/GLTFLoader/DRACOLoader are wired together via an import map with runtime-generated `blob:` URIs (not `data:` — the real hosting platform's CSP blocks `data:` for scripts) — see `CLAUDE.md` for exactly how.
 
 ## Where this project is headed
 
@@ -44,6 +45,10 @@ python3 scripts/fetch_places.py           # -> data/places_raw.json (~200 named 
 python3 scripts/build_labels.py           # -> output/labels.json (same lat/lon -> model-space transform
                                            # as build_grid.py; independent of the GLB, so re-running this
                                            # alone + site/assemble.py is enough after a places-only change)
+python3 scripts/fetch_redlining.py        # -> data/redlining_raw.geojson (40 graded 1938 HOLC redlining
+                                           # polygons for Macon, GA -- an overlay, not part of the base map;
+                                           # see docs/OVERLAYS.md. Independent of the rest of the pipeline,
+                                           # like fetch_places.py above)
 python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~10.8M faces
                                            # for the whole county as a multi-node scene -- several minutes)
 npx gltf-pipeline -i output/colored/full_disk_colored.glb -o site/full_disk_draco.glb -d --draco.compressionLevel=10 --draco.quantizePositionBits=14 --draco.quantizeColorBits=8 --draco.unifiedQuantization
@@ -52,7 +57,7 @@ python3 site/assemble.py                  # -> site/downtown_macon_3d.html (~11M
 
 `build_colored_disk.py` imports `build_grid.py` directly for shared terrain/tile-geometry logic — keep both in `scripts/` together.
 
-Python deps: `geopandas`, `trimesh`, `rioxarray`, `scipy`, `shapely`, `pyproj`, `numpy`, `rasterio`, `requests`, plus trimesh's own `mapbox_earcut` (polygon triangulation) and `manifold3d` (boolean ops) -- both needed but not auto-installed as trimesh dependencies, easy to miss until a build fails partway through.
+Python deps: `geopandas`, `trimesh`, `rioxarray`, `scipy`, `shapely`, `pyproj`, `numpy`, `rasterio`, `requests`, `pyarrow` (geopandas' parquet reader, needed only by `fetch_redlining.py`), plus trimesh's own `mapbox_earcut` (polygon triangulation) and `manifold3d` (boolean ops) -- both needed but not auto-installed as trimesh dependencies, easy to miss until a build fails partway through.
 
 `site/three.module.js`, `GLTFLoader.js`, `DRACOLoader.js`, and `BufferGeometryUtils.js` are vendored from a pinned `three` release (unpkg) and checked in directly — no npm/bundler step needed to rebuild the page.
 
