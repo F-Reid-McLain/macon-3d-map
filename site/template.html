@@ -895,6 +895,14 @@ const LEGEND_SECTIONS = [
       { node: "demo_occ_production", label: "Production, transportation & material moving", ramp: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"], defaultOff: true },
     ],
   },
+  {
+    heading: "Workforce geography (Census LODES)",
+    note: "Where jobs are physically located vs. where the people who hold them live, by Census block group -- lightest = lowest fifth of block groups, darkest = highest fifth. An actual commute-flow map (lines connecting home to work) was tried and dropped: real commuting here is too spread out across thousands of block-group pairs for a small set of lines to represent honestly. Source: US Census LEHD Origin-Destination Employment Statistics (LODES), 2022.",
+    rows: [
+      { node: "commute_jobs", label: "Jobs located here", ramp: ["#eef2f9", "#c6d4e8", "#93aed2", "#5b7fb5", "#2c4a80"], defaultOff: true },
+      { node: "commute_workers", label: "Employed workers living here", ramp: ["#fdf1e6", "#f8d5b0", "#f0ab63", "#d97e28", "#a35a12"], defaultOff: true },
+    ],
+  },
 ];
 
 // buildings are colored via per-vertex COLOR_0 data (each face's real
@@ -1070,7 +1078,7 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
       // buildings/terrain -- translucency is what reads them as "a layer
       // laid on top of today's map" rather than a replacement for it. See
       // docs/OVERLAYS.md.
-      if (obj.name && (obj.name.startsWith("redlining_") || obj.name.startsWith("demo_"))) {
+      if (obj.name && (obj.name.startsWith("redlining_") || obj.name.startsWith("demo_") || obj.name.startsWith("commute_"))) {
         obj.material.transparent = true;
         obj.material.opacity = 0.5;
         obj.material.depthWrite = false;

@@ -135,8 +135,47 @@ in the same transparency/no-shadow handling redlining already needed).
 
 **Colors**: grey for race (deliberately neutral — encodes magnitude only, no
 implied value judgment about the demographic itself), purple for education,
-orange for labor force, blue for income, green for homeownership. Chosen to
+orange for labor force, blue for income, green for homeownership, and five
+more for the occupation categories (teal, pink, gold, brown, red). Chosen to
 avoid hues already load-bearing elsewhere in the legend.
+
+## Workforce geography (Census LODES)
+
+**What it is.** Two more block-group choropleths, same rendering approach as
+demographics above: total jobs physically located in each block group, and
+total employed residents living in each block group — the actual spatial
+mismatch between where Macon's jobs are and where its workforce lives.
+
+**Why not a commute-flow map.** The obvious first idea was origin-destination
+lines connecting home block to work block. Tried and dropped after actually
+looking at the data: 56,784 distinct block-group-to-block-group pairs touch
+Bibb County, and even the top 500 by volume only account for ~15.6% of total
+commuting. Real commuting here is genuinely diffuse, not concentrated into a
+few dominant corridors — a "draw the biggest flows" map would be either an
+unreadable tangle of thousands of lines, or a small, arbitrary-looking sample
+that misrepresents how spread out it actually is. The jobs/workers density
+pair is the honest version of the same underlying question, and it reuses
+the exact choropleth machinery already built for demographics instead of
+needing new line-geometry rendering.
+
+**Data source.** US Census LEHD Origin-Destination Employment Statistics
+(LODES8), 2022, Georgia state files — small flat CSV.GZ files (~1.5MB WAC,
+~4MB RAC for the whole state, no API key needed unlike the ACS demographics
+fetch): `ga_wac_S000_JT00_2022.csv.gz` (Workplace Area Characteristics, total
+jobs per block) and `ga_rac_S000_JT00_2022.csv.gz` (Residence Area
+Characteristics, total employed residents per block), both filtered to Bibb
+County and summed up from Census block to block group. Both variables are
+raw counts, not percentages, like `median_household_income` elsewhere in
+this pipeline — "how many jobs/workers are physically here" is the actual
+question, not a share of something.
+
+**Code structure.** `build_commuting_layers()` and `build_demographics_layers()`
+are two thin wrappers around a shared `_build_quantile_choropleth_layers()`
+helper — the underlying pattern (quantile-bucket each variable, one decal per
+polygon colored from its bucket, merge all buckets into one node per
+variable) is identical, just over a different data source/variable list, and
+this was the second copy of that exact logic, past the point where
+extracting it was worth doing.
 
 ## Adding the next overlay
 

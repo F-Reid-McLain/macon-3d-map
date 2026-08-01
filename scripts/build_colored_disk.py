@@ -126,6 +126,22 @@ DEMOGRAPHIC_COLOR_RAMPS = {
     "demo_occ_production": [[254, 229, 217, 255], [252, 174, 145, 255], [251, 106, 74, 255], [222, 45, 38, 255], [165, 15, 21, 255]],
 }
 
+# Workforce geography (Census LODES) -- where jobs are physically located vs.
+# where the people who hold them live, see scripts/fetch_commuting.py for why
+# this replaced an attempted commute-FLOW-LINE map (real flows here turned
+# out too diffuse for a readable "top N lines" visualization). Same quantile-
+# bucket-and-ramp treatment as DEMOGRAPHIC_COLOR_RAMPS, just a separate dict/
+# data source/build function (build_commuting_layers(), not folded into
+# build_demographics_layers()) since it's a genuinely different dataset.
+COMMUTING_VARS = [
+    ("jobs_total", "commute_jobs"),
+    ("workers_total", "commute_workers"),
+]
+COMMUTING_COLOR_RAMPS = {
+    "commute_jobs": [[238, 242, 249, 255], [198, 212, 232, 255], [147, 174, 210, 255], [91, 127, 181, 255], [44, 74, 128, 255]],
+    "commute_workers": [[253, 241, 230, 255], [248, 213, 176, 255], [240, 171, 99, 255], [217, 126, 40, 255], [163, 90, 18, 255]],
+}
+
 # Every node name that ends up in the exported Scene, in legend order -- also
 # the exact set of names site/template.html looks for when wiring up toggle
 # checkboxes. "terrain" is deliberately NOT toggleable in the UI (hiding the
@@ -137,6 +153,7 @@ CATEGORIES = [
     "redlining_a", "redlining_b", "redlining_c", "redlining_d",
     "demo_race_black", "demo_education", "demo_labor_force", "demo_income", "demo_homeownership",
     "demo_occ_management", "demo_occ_service", "demo_occ_sales_office", "demo_occ_natural_resources", "demo_occ_production",
+    "commute_jobs", "commute_workers",
 ]
 
 DECAL_HEIGHT_MM = 0.12
@@ -542,23 +559,21 @@ def build_redlining_layer():
     return result
 
 
-def build_demographics_layers():
-    """Returns {demo_race_black/education/labor_force/income/homeownership:
-    mesh} for whichever variables have data. Same not-tiled, decal-at-
-    REDLINING_LIFT_MM approach as build_redlining_layer() (136 Census block
-    group polygons total for the whole county -- cheap enough for one pass),
-    but each variable's block groups are quantile-bucketed into 5 classes
-    and colored from that variable's sequential ramp (DEMOGRAPHIC_COLOR_RAMPS)
-    instead of 4 fixed letter-grade colors, and ALL 5 buckets of one variable
-    merge into one scene node/legend toggle (see DEMOGRAPHIC_VARS comment)."""
-    path = "data/demographics_raw.geojson"
+def _build_quantile_choropleth_layers(path, missing_msg, var_specs, color_ramps):
+    """Shared by build_demographics_layers() and build_commuting_layers() --
+    both are the same pattern (load a block-group GeoDataFrame, quantile-
+    bucket each variable into 5 classes, one decal-at-REDLINING_LIFT_MM per
+    polygon colored from that variable's ramp, all 5 buckets merged into one
+    scene node per variable) over a different data source/variable list.
+    Same not-tiled approach as build_redlining_layer() -- ~136 block group
+    polygons total for the whole county, cheap enough for one pass."""
     if not os.path.exists(path):
-        print("no data/demographics_raw.geojson -- run scripts/fetch_demographics.py first; skipping this layer")
+        print(f"no {path} -- {missing_msg}; skipping this layer")
         return {}
 
     gdf = gpd.read_file(path).to_crs(bg.UTM_CRS)
     result = {}
-    for col, node in DEMOGRAPHIC_VARS:
+    for col, node in var_specs:
         valid = gdf[gdf[col].notna()].copy()
         if len(valid) == 0:
             continue
@@ -566,7 +581,7 @@ def build_demographics_layers():
         # standard choropleth practice -- not equal-width value ranges, which
         # a single outlier block group could badly skew.
         valid["bucket"] = pd.qcut(valid[col], 5, labels=False, duplicates="drop")
-        ramp = DEMOGRAPHIC_COLOR_RAMPS[node]
+        ramp = color_ramps[node]
 
         decals = []
         for _, row in valid.iterrows():
@@ -590,6 +605,25 @@ def build_demographics_layers():
         if decals:
             result[node] = trimesh.util.concatenate(decals) if len(decals) > 1 else decals[0]
     return result
+
+
+def build_demographics_layers():
+    """Returns {demo_race_black/education/labor_force/income/homeownership/
+    demo_occ_*: mesh} for whichever variables have data -- see
+    DEMOGRAPHIC_VARS/DEMOGRAPHIC_COLOR_RAMPS and
+    _build_quantile_choropleth_layers()."""
+    return _build_quantile_choropleth_layers(
+        "data/demographics_raw.geojson", "run scripts/fetch_demographics.py first",
+        DEMOGRAPHIC_VARS, DEMOGRAPHIC_COLOR_RAMPS)
+
+
+def build_commuting_layers():
+    """Returns {commute_jobs/commute_workers: mesh} -- see
+    COMMUTING_VARS/COMMUTING_COLOR_RAMPS and
+    _build_quantile_choropleth_layers()."""
+    return _build_quantile_choropleth_layers(
+        "data/commuting_raw.geojson", "run scripts/fetch_commuting.py first",
+        COMMUTING_VARS, COMMUTING_COLOR_RAMPS)
 
 
 if __name__ == "__main__":
@@ -626,8 +660,12 @@ if __name__ == "__main__":
         for node, mesh in build_demographics_layers().items():
             all_by_category[node].append(mesh)
             print(f"  {node}: {len(mesh.faces)} faces")
+        print("\nbuilding commuting overlays (not tiled -- 136 block groups total) ...")
+        for node, mesh in build_commuting_layers().items():
+            all_by_category[node].append(mesh)
+            print(f"  {node}: {len(mesh.faces)} faces")
     else:
-        print("\nSKIP_DEMOGRAPHICS_OVERLAY=1 -- omitting demographics overlays from this build")
+        print("\nSKIP_DEMOGRAPHICS_OVERLAY=1 -- omitting demographics/commuting overlays from this build")
 
     print(f"\n{n_tiles_built}/{len(bg.tiles)} tiles had content; merging per category ...")
     scene = trimesh.Scene()

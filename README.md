@@ -50,9 +50,13 @@ python3 scripts/fetch_redlining.py        # -> data/redlining_raw.geojson (40 gr
                                            # see docs/OVERLAYS.md. Independent of the rest of the pipeline,
                                            # like fetch_places.py above)
 CENSUS_API_KEY=... python3 scripts/fetch_demographics.py  # -> data/demographics_raw.geojson (136 Census
-                                           # block groups x 5 ACS variables -- also an overlay, see
-                                           # docs/OVERLAYS.md. Needs a free key: api.census.gov/data/key_signup.html
-python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~9M faces
+                                           # block groups x 10 ACS variables (5 general + 5 top-level
+                                           # occupation) -- also an overlay, see docs/OVERLAYS.md. Needs
+                                           # a free key: api.census.gov/data/key_signup.html
+python3 scripts/fetch_commuting.py        # -> data/commuting_raw.geojson (136 block groups x 2 LODES
+                                           # variables -- jobs located here / workers living here, no
+                                           # API key needed. See docs/OVERLAYS.md)
+python3 scripts/build_colored_disk.py     # -> output/colored/full_disk_colored.glb (97 tiles, ~10M faces
                                            # for the whole county as a multi-node scene -- several minutes)
 npx gltf-pipeline -i output/colored/full_disk_colored.glb -o site/full_disk_draco.glb -d --draco.compressionLevel=10 --draco.quantizePositionBits=14 --draco.quantizeColorBits=8 --draco.unifiedQuantization
 python3 site/assemble.py                  # -> site/downtown_macon_3d.html (~10MB)
