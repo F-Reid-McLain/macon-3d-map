@@ -28,6 +28,7 @@ import json
 import geopandas as gpd
 from shapely.geometry import Point, MultiLineString
 from shapely.ops import unary_union, linemerge
+from shapely.strtree import STRtree
 
 import build_grid as bg
 
@@ -73,6 +74,46 @@ COUNTY_SHAPE_LOOSE = bg.COUNTY_SHAPE.buffer(300.0)
 
 LABEL_FLOAT_MM = 4.0  # hover text just above terrain/rooftops, avoid z-fighting
 
+# Neighbourhood/hamlet nodes have no population tag in OSM (only 1 of 202
+# does), so building density around the point is the best real-data proxy
+# for "is this actually a substantial named place worth labeling" -- a
+# handful of named points sit in fields with zero buildings within 250m
+# (likely a crossroads name or a stray/inaccurate node, either way not worth
+# a label), and plenty more have only a few. Chosen by inspecting the actual
+# distribution: ~15 buildings within 250m is roughly the 10th percentile
+# county-wide, i.e. this drops the sparsest tenth rather than gutting the
+# tier.
+PLACE_DENSITY_RADIUS_M = 250.0
+PLACE_MIN_BUILDINGS_NEARBY = 15
+_building_centroids = bg.buildings_all.geometry.centroid.values
+_building_tree = STRtree(_building_centroids)
+
+
+def buildings_nearby(x_utm, y_utm):
+    return len(_building_tree.query(Point(x_utm, y_utm).buffer(PLACE_DENSITY_RADIUS_M)))
+
+
+# Divided highways/rivers with multiple channels are mapped in OSM as
+# separate parallel ways sharing one name -- linemerge treats them as
+# distinct parts, so the same route/river can get two labels only a few
+# dozen meters apart, visibly stacked on top of each other at this scale.
+# Collapse same-tier, same-name labels within this real-world distance down
+# to one.
+DEDUPE_MIN_DIST_M = 150.0
+
+
+def dedupe_close_labels(labels):
+    threshold_mm = DEDUPE_MIN_DIST_M * bg.MM_PER_M
+    kept_by_key = {}
+    out = []
+    for lb in labels:
+        kept = kept_by_key.setdefault((lb["tier"], lb["name"]), [])
+        if any(((lb["x"] - k["x"]) ** 2 + (lb["y"] - k["y"]) ** 2) ** 0.5 < threshold_mm for k in kept):
+            continue
+        kept.append(lb)
+        out.append(lb)
+    return out
+
 
 def load_places():
     with open("data/places_raw.json") as f:
@@ -92,10 +133,17 @@ def to_model_xyz_utm(x_utm, y_utm):
 
 
 def highway_label_text(row):
+    # Numbered route ref only -- no fallback to the OSM `name` tag. Plenty of
+    # ordinary local streets (Sardis Church Road, Mulberry Street, ...) are
+    # tagged highway=primary with no ref, and giving those the same
+    # shield-badge treatment as I-75/US 41 looked wrong (a residential street
+    # rendered exactly like an interstate) and cluttered the tier with routes
+    # nobody would call a "highway". If a road has no route number, it just
+    # doesn't get a highway-tier label.
     ref = (row["ref"] or "").strip()
     if ref:
         return ref.split(";")[0].strip()
-    return (row["name"] or "").strip() or None
+    return None
 
 
 def build_highway_labels():
@@ -179,6 +227,7 @@ def build():
     elements = load_places()
     labels = []
     skipped_outside = 0
+    skipped_sparse = 0
     for i, el in enumerate(elements):
         tags = el.get("tags", {})
         name = tags.get("name")
@@ -208,6 +257,10 @@ def build():
             skipped_outside += 1
             continue
 
+        if tier in ("neighbourhood", "hamlet") and buildings_nearby(x_utm, y_utm) < PLACE_MIN_BUILDINGS_NEARBY:
+            skipped_sparse += 1
+            continue
+
         labels.append({
             "id": f"pl-{i}",
             "name": name,
@@ -217,7 +270,8 @@ def build():
             "z": round(z_mm, 2),
         })
 
-    print(f"{len(labels)} place labels built, {skipped_outside} skipped (outside county)")
+    print(f"{len(labels)} place labels built, {skipped_outside} skipped (outside county), "
+          f"{skipped_sparse} skipped (too few buildings nearby)")
 
     hwy_labels = build_highway_labels()
     print(f"{len(hwy_labels)} highway labels built")
@@ -226,6 +280,10 @@ def build():
     water_labels = build_water_labels()
     print(f"{len(water_labels)} water labels built")
     labels += water_labels
+
+    before_dedupe = len(labels)
+    labels = dedupe_close_labels(labels)
+    print(f"{before_dedupe - len(labels)} near-duplicate labels merged (divided highways/channels)")
 
     by_tier = {}
     for lb in labels:
