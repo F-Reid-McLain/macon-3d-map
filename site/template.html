@@ -176,7 +176,8 @@
      support, styled via background-position rather than a ::before
      pseudo-element so it doesn't depend on browsers supporting generated
      content on <input>, which is inconsistent. */
-  .legend-row input[type="checkbox"] {
+  .legend-row input[type="checkbox"],
+  .legend-section-master input[type="checkbox"] {
     appearance: none;
     -webkit-appearance: none;
     box-sizing: border-box;
@@ -195,13 +196,25 @@
     background-position: 1.5px center;
     transition: background-position 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
   }
-  .legend-row input[type="checkbox"]:checked {
+  .legend-row input[type="checkbox"]:checked,
+  .legend-section-master input[type="checkbox"]:checked {
     background-color: rgba(212,172,94,0.22);
     background-image: linear-gradient(var(--brass-bright), var(--brass-bright));
     background-position: 9.5px center;
     border-color: var(--brass-bright);
   }
-  .legend-row input[type="checkbox"]:disabled {
+  /* master (select-all) checkboxes go indeterminate when a section's rows
+     are a mix of shown/hidden -- same track, dot parked at the midpoint
+     instead of either end, so it reads as a distinct third state rather
+     than looking like a half-finished animation. */
+  .legend-section-master input[type="checkbox"]:indeterminate {
+    background-color: rgba(212,172,94,0.22);
+    background-image: linear-gradient(var(--brass-bright), var(--brass-bright));
+    background-position: 5.5px center;
+    border-color: var(--brass-bright);
+  }
+  .legend-row input[type="checkbox"]:disabled,
+  .legend-section-master input[type="checkbox"]:disabled {
     opacity: 0.35;
     cursor: default;
   }
@@ -257,33 +270,48 @@
     color: var(--brass-bright);
   }
 
-  /* collapsible section headings -- with 7+ sections and ~30 rows once every
+  /* collapsible section headings -- with 9+ sections and ~30 rows once every
      overlay is counted, an always-fully-expanded flat list got unwieldy.
      Data-overlay sections (redlining/demographics/occupation/commuting)
-     start collapsed by default (see buildLegend()'s SECTIONS_EXPANDED_BY_DEFAULT)
+     start collapsed by default (see LEGEND_SECTIONS' collapsedByDefault)
      since they're the least likely to be everyone's first stop; base-map
-     sections start open as before. */
+     sections start open as before.
+
+     Two separate interactive controls live here, not one -- a master
+     select-all/none checkbox (left) and a plain expand/collapse button
+     (right) -- deliberately NOT one shared clickable heading like a plain
+     row is, since "toggle every layer in this section" and "show/hide this
+     section's row list" are two different actions someone might want
+     independently (collapse a section without hiding its layers, or hide
+     every layer in a section while leaving it expanded to see the result). */
   .legend-section-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
     width: 100%;
+    margin: 0.75rem 0 0.25rem;
+  }
+  .legend-section-master {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .legend-section-master .desc { margin: 0; }
+  .legend-section-chevron-btn {
+    flex: none;
     background: none;
     border: none;
-    padding: 0;
-    margin: 0.75rem 0 0.25rem;
+    padding: 0.15rem 0 0.15rem 0.5rem;
     cursor: pointer;
-    text-align: left;
     color: inherit;
-    font: inherit;
   }
-  .legend-section-heading .desc { margin: 0; }
   .legend-section-heading .chevron {
     flex: none;
     font-size: 0.7rem;
     color: var(--paper-dim);
     transition: transform 0.15s ease;
-    margin-left: 0.5rem;
   }
   .legend-section.collapsed .chevron { transform: rotate(-90deg); }
   .legend-section-body {
@@ -1013,7 +1041,7 @@ const CATEGORY_COLOR = {
 // visibility toggle, but a scene-wide vertical-scale transform (see
 // setTrueScaleElevation()) -- handled as its own branch in buildLegend().
 const LEGEND_SECTIONS = [
-  { rows: [
+  { heading: "Special-cased buildings", rows: [
     { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital", building: true,
       info: ["Buildings tagged as hospitals in OpenStreetMap, colored red regardless of what the parcel is actually zoned for.", "Special-cased ahead of zoning, like the other three rows in this group, because a hospital's real-world significance doesn't depend on its zoning code."] },
     { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government", building: true,
@@ -1037,19 +1065,23 @@ const LEGEND_SECTIONS = [
     { node: "unclassified", label: "Unclassified", color: "#d2b48c", building: true,
       info: ["Buildings whose tax parcel had no zoning code on file at all (about 0.4% of parcels) or listed something that didn't match any known code.", "Falls back to this flat tan rather than guessing at a category with no real data behind it."] },
   ] },
-  { heading: "Other features", rows: [
+  { heading: "Infrastructure", rows: [
     { node: "road", label: "Roads", color: "#787878",
       info: ["Real road centerlines from OpenStreetMap, buffered into a paintable ribbon (width tiered by road class -- highways read wider than residential streets) and draped onto the actual terrain surface vertex by vertex, so it follows real elevation changes instead of sitting at one flat height."] },
     { node: "parking", label: "Parking lots", color: "#9690a7",
       info: ["Real parking lot footprints from OpenStreetMap, rendered as a thin decal flush with the terrain."] },
     { node: "water", label: "Water", color: "#4678c8",
       info: ["Rivers and standing water from OpenStreetMap, cut as a real recess into the terrain (not just colored flat) so it reads as a genuine depression, with a matching blue decal resting at the bottom of the cut."] },
+  ] },
+  { heading: "Airport", rows: [
     { node: "runway", label: "Airport runways", color: "#3c3c42",
       info: ["Real runway pavement at Middle Georgia Regional Airport and Macon Downtown Airport, from OpenStreetMap.", "About a third of the raw data is a real mapped paved outline; the rest is a bare centerline with no width recorded, buffered to a fixed 45m (a realistic regional-airport runway width, not a precise per-runway figure) rather than left as an invisible line."] },
     { node: "taxiway", label: "Airport taxiways", color: "#8a8060",
       info: ["Taxiway centerlines connecting runways to aprons/hangars, from OpenStreetMap, buffered to a fixed 15m width (OSM has essentially no per-taxiway width data here) and draped onto the terrain like roads."] },
     { node: "apron", label: "Airport aprons (aircraft parking)", color: "#aca696",
       info: ["Real paved aircraft parking/staging areas at both airports -- the closest real equivalent to a “parking lot” for planes rather than cars.", "Ordinary car parking lots at the airport (rental car lots, terminal parking) are already included in the Parking lots category above."] },
+  ] },
+  { heading: "Terrain", rows: [
     { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a",
       info: ["Real USGS 3DEP elevation data, vertically exaggerated 2.5x so Macon's actual relief -- especially the river bluff downtown -- reads clearly at this scale instead of looking flat.", "Hiding it leaves every other layer floating at its real relative height with no ground plane -- useful for isolating a specific layer, not a bug."] },
     { scaleToggle: true, label: "True-to-scale elevation (no exaggeration)",
@@ -1473,25 +1505,60 @@ function buildLegend(categoryMeshes) {
   }
 
   for (const section of LEGEND_SECTIONS) {
-    // sections without a heading (just the top hospitals/government/mercer/
-    // landmark group) stay flat and always-expanded, same as before --
-    // collapsibility only applies to headed sections, and data-overlay
-    // sections start collapsed (see LEGEND_SECTIONS' collapsedByDefault)
-    // since with 12 overlay rows now, having them all expanded by default
-    // buried the base map categories below a wall of rows nobody asked for
-    // yet.
+    // Every section now has a heading (the old headingless top group reads
+    // as "just floating rows" once there are 9 sections to scan past --
+    // "Special-cased buildings" gives it the same visual anchor as
+    // everything else). collapsedByDefault (data-overlay sections) still
+    // starts collapsed; base-map sections start open.
     let bodyEl = rowsEl;
+    // Checkboxes for this section's real toggleable (mesh-backed) rows --
+    // populated as rows are built below, read by updateMasterState()/the
+    // master checkbox's own change handler. Deliberately excludes
+    // scaleToggle/noToggle/disabled rows: "select all" should only ever
+    // touch actual layer-visibility checkboxes, not a scene-wide transform
+    // or a row with nothing to show in the first place.
+    const sectionCheckboxes = [];
+    let masterCheckbox = null;
+    function updateMasterState() {
+      if (!masterCheckbox) return;
+      const checkedCount = sectionCheckboxes.filter((cb) => cb.checked).length;
+      masterCheckbox.checked = checkedCount === sectionCheckboxes.length;
+      masterCheckbox.indeterminate = checkedCount > 0 && checkedCount < sectionCheckboxes.length;
+    }
     if (section.heading) {
       const sectionEl = document.createElement("div");
       sectionEl.className = "legend-section" + (section.collapsedByDefault ? " collapsed" : "");
-      const headingBtn = document.createElement("button");
-      headingBtn.type = "button";
-      headingBtn.className = "legend-section-heading";
-      headingBtn.innerHTML = `<span class="desc">${section.heading}</span><span class="chevron">▾</span>`;
+      const headingEl = document.createElement("div");
+      headingEl.className = "legend-section-heading";
+
+      const masterLabel = document.createElement("label");
+      masterLabel.className = "legend-section-master";
+      const masterId = "vis-master-" + (rowId++);
+      masterLabel.innerHTML = `<input type="checkbox" id="${masterId}"><span class="desc">${section.heading}</span>`;
+      masterCheckbox = masterLabel.querySelector("input");
+      masterCheckbox.addEventListener("change", () => {
+        const newState = masterCheckbox.checked;
+        masterCheckbox.indeterminate = false;
+        for (const cb of sectionCheckboxes) {
+          if (cb.checked !== newState) {
+            cb.checked = newState;
+            cb.dispatchEvent(new Event("change"));
+          }
+        }
+      });
+
+      const chevronBtn = document.createElement("button");
+      chevronBtn.type = "button";
+      chevronBtn.className = "legend-section-chevron-btn";
+      chevronBtn.setAttribute("aria-label", "Expand/collapse " + section.heading);
+      chevronBtn.innerHTML = `<span class="chevron">▾</span>`;
+      chevronBtn.addEventListener("click", () => sectionEl.classList.toggle("collapsed"));
+
+      headingEl.appendChild(masterLabel);
+      headingEl.appendChild(chevronBtn);
       bodyEl = document.createElement("div");
       bodyEl.className = "legend-section-body";
-      headingBtn.addEventListener("click", () => sectionEl.classList.toggle("collapsed"));
-      sectionEl.appendChild(headingBtn);
+      sectionEl.appendChild(headingEl);
       sectionEl.appendChild(bodyEl);
       rowsEl.appendChild(sectionEl);
     }
@@ -1550,9 +1617,11 @@ function buildLegend(categoryMeshes) {
         } else {
           mesh.visible = startChecked;
           rowEl.classList.toggle("hidden-category", !startChecked);
+          sectionCheckboxes.push(checkbox);
           checkbox.addEventListener("change", () => {
             mesh.visible = checkbox.checked;
             rowEl.classList.toggle("hidden-category", !checkbox.checked);
+            updateMasterState();
           });
           if (row.building) {
             buildingSwatches.push({ button: swatch, mesh });
@@ -1573,6 +1642,16 @@ function buildLegend(categoryMeshes) {
       noteEl.style.margin = "0.4rem 0 0.5rem";
       noteEl.textContent = section.note;
       bodyEl.appendChild(noteEl);
+    }
+    // A "select all" toggle for a section with 0-1 real rows to aggregate is
+    // either meaningless or exactly redundant with the one row beneath it --
+    // hide it rather than show a control that does nothing useful.
+    if (masterCheckbox) {
+      if (sectionCheckboxes.length < 2) {
+        masterCheckbox.closest(".legend-section-master").style.display = "none";
+      } else {
+        updateMasterState();
+      }
     }
   }
   refreshHighlightLinkText();
