@@ -208,6 +208,15 @@
   .legend-row.hidden-category {
     color: var(--paper-dim);
   }
+  /* the "true-to-scale elevation" scene-wide toggle reads as a sub-option of
+     the Terrain row right above it, not a peer category -- indent + smaller/
+     dimmer text, no swatch (it doesn't correspond to one mesh). */
+  .legend-row.legend-row-suboption {
+    padding-left: 1.3rem;
+    padding-top: 0;
+    font-size: 0.76rem;
+    color: var(--paper-dim);
+  }
   .legend-row.hidden-category .swatch {
     opacity: 0.3;
   }
@@ -999,8 +1008,10 @@ const CATEGORY_COLOR = {
 // Legend rows, in display order -- "node" must exactly match the mesh node
 // names build_colored_disk.py's CATEGORIES list exports (each category is
 // its own node in the GLB specifically so it can be shown/hidden
-// independently here). "terrain" has noToggle: true -- hiding the ground
-// plane isn't useful, so it's listed but not made interactive.
+// independently here). A row with `scaleToggle: true` instead of `node` is
+// a different kind of control entirely -- not a per-category mesh
+// visibility toggle, but a scene-wide vertical-scale transform (see
+// setTrueScaleElevation()) -- handled as its own branch in buildLegend().
 const LEGEND_SECTIONS = [
   { rows: [
     { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital", building: true,
@@ -1039,8 +1050,10 @@ const LEGEND_SECTIONS = [
       info: ["Taxiway centerlines connecting runways to aprons/hangars, from OpenStreetMap, buffered to a fixed 15m width (OSM has essentially no per-taxiway width data here) and draped onto the terrain like roads."] },
     { node: "apron", label: "Airport aprons (aircraft parking)", color: "#aca696",
       info: ["Real paved aircraft parking/staging areas at both airports -- the closest real equivalent to a “parking lot” for planes rather than cars.", "Ordinary car parking lots at the airport (rental car lots, terminal parking) are already included in the Parking lots category above."] },
-    { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true,
-      info: ["Real USGS 3DEP elevation data, vertically exaggerated 2.5x so Macon's actual relief -- especially the river bluff downtown -- reads clearly at this scale instead of looking flat.", "Can't be hidden; there's not much point in a relief map with no ground."] },
+    { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a",
+      info: ["Real USGS 3DEP elevation data, vertically exaggerated 2.5x so Macon's actual relief -- especially the river bluff downtown -- reads clearly at this scale instead of looking flat.", "Hiding it leaves every other layer floating at its real relative height with no ground plane -- useful for isolating a specific layer, not a bug."] },
+    { scaleToggle: true, label: "True-to-scale elevation (no exaggeration)",
+      info: ["Scales the model's whole vertical axis down so terrain relief matches the real 1:12,500 horizontal scale, instead of the 2.5x exaggeration used everywhere else on this map.", "Building heights use their own, separate (and larger) exaggeration factor that this single flat scale can't independently retarget -- they get proportionally shorter too as a side effect, not individually recalculated to be true-to-scale on their own."] },
   ] },
   {
     heading: "Historical redlining (1938 HOLC survey)",
@@ -1231,6 +1244,29 @@ scene.add(sun);
 const modelGroup = new THREE.Group();
 modelGroup.rotation.x = -Math.PI / 2;
 scene.add(modelGroup);
+
+// ---- true-to-scale elevation toggle: scales modelGroup's OWN scale.z
+// (applied to children BEFORE the -90deg rotation above, i.e. this is the
+// raw mesh's authored Z/"height" axis, same one the rotation then maps to
+// world "up") down to undo the terrain's baked-in 2.5x vertical
+// exaggeration (build_grid.py's TERRAIN_MM_PER_M = MM_PER_M * 2.5) relative
+// to the model's fixed 1:12,500 horizontal scale. Pivots naturally around
+// z=0 with zero extra math needed, because that's exactly where the
+// terrain plate's own physical base/underside already sits
+// (build_terrain_base()'s bottom face is literally z=0) -- so the ground
+// plane's underside never shifts, relief just compresses toward it.
+// Everything draped flush on terrain (roads/water/parking/aeroway/overlay
+// decals -- all built from terrain_z_mm() plus a small fixed lift) scales
+// correctly right along with it for the same reason. Buildings are the one
+// inexact part: their height uses a separate, larger exaggeration factor
+// (METERS_TO_MM=0.3mm/m vs terrain's 0.2mm/m, against a true 0.08mm/m) that
+// this single flat scale can't independently retarget -- they get
+// proportionally shorter too, a documented simplification (see this row's
+// info text), not a bug. ----
+const TRUE_SCALE_Z = 0.4; // MM_PER_M / TERRAIN_MM_PER_M, i.e. 1 / 2.5
+function setTrueScaleElevation(enabled) {
+  modelGroup.scale.z = enabled ? TRUE_SCALE_Z : 1;
+}
 window.__debug = { THREE, scene, camera, renderer, modelGroup, LABELS, PLACE_LABEL_TIERS };
 
 // ---- load model: GLTFLoader.parse() takes an ArrayBuffer directly, so the
@@ -1462,11 +1498,23 @@ function buildLegend(categoryMeshes) {
     for (const row of section.rows) {
       const id = "vis-" + (rowId++);
       const rowEl = document.createElement("div");
-      rowEl.className = "legend-row" + (row.noToggle ? "" : "");
+      rowEl.className = "legend-row" + (row.noToggle ? "" : "") + (row.scaleToggle ? " legend-row-suboption" : "");
       const countSpan = row.countId ? `<span class="legend-count mono" id="${row.countId}"></span>` : "";
-      const mesh = row.noToggle ? null : categoryMeshes[row.node];
+      const mesh = row.noToggle || row.scaleToggle ? null : categoryMeshes[row.node];
 
-      if (row.noToggle) {
+      if (row.scaleToggle) {
+        // Not a per-category mesh toggle -- a scene-wide transform (see
+        // setTrueScaleElevation()), off by default (the baked-in 2.5x
+        // exaggeration is the map's normal look).
+        rowEl.innerHTML =
+          `<input type="checkbox" id="${id}">` +
+          `<span class="legend-label">${row.label}</span>` +
+          infoBtnHtml(row);
+        wireInfoBtn(rowEl, row);
+        rowEl.querySelector("input").addEventListener("change", (e) => {
+          setTrueScaleElevation(e.target.checked);
+        });
+      } else if (row.noToggle) {
         rowEl.innerHTML = `<span class="swatch" style="background:${row.color}"></span>` +
           `<span class="legend-label no-toggle">${row.label}${countSpan}</span>` +
           infoBtnHtml(row);
