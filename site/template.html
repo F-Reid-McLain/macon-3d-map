@@ -170,13 +170,40 @@
     padding: 0.3rem 0;
     font-size: 0.82rem;
   }
+  /* square sliding switch (not a native checkmark) -- a small rectangular
+     track with a square thumb that slides right when on. Built on a real
+     <input type="checkbox"> (appearance: none) for accessibility/keyboard
+     support, styled via background-position rather than a ::before
+     pseudo-element so it doesn't depend on browsers supporting generated
+     content on <input>, which is inconsistent. */
   .legend-row input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
     flex: none;
-    width: 0.8rem;
-    height: 0.8rem;
+    width: 20px;
+    height: 11px;
     margin: 0;
-    accent-color: var(--brass);
+    padding: 0;
+    border: 1px solid var(--paper-dim);
+    border-radius: 2px;
     cursor: pointer;
+    background-color: rgba(236,230,217,0.12);
+    background-image: linear-gradient(var(--paper-dim), var(--paper-dim));
+    background-repeat: no-repeat;
+    background-size: 7px 7px;
+    background-position: 1.5px center;
+    transition: background-position 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .legend-row input[type="checkbox"]:checked {
+    background-color: rgba(212,172,94,0.22);
+    background-image: linear-gradient(var(--brass-bright), var(--brass-bright));
+    background-position: 9.5px center;
+    border-color: var(--brass-bright);
+  }
+  .legend-row input[type="checkbox"]:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
   .legend-row.hidden-category {
     color: var(--paper-dim);
@@ -1014,13 +1041,13 @@ const LEGEND_SECTIONS = [
     note: "The federal Home Owners' Loan Corporation graded neighborhoods for mortgage risk in the 1930s -- “D”/red areas (majority-Black or immigrant neighborhoods, regardless of actual home values) were “redlined”: denied loans on that basis alone. Macon was among the most severely redlined cities in the country. Floats above the buildings as a translucent layer so it reads as an overlay, not a replacement for today's map. Source: University of Richmond's Mapping Inequality project (see the in-app credit at the bottom of this panel).",
     collapsedByDefault: true,
     rows: [
-      { node: "redlining_a", label: "“Best” (A)", color: "#76a865",
+      { node: "redlining_a", label: "“Best” (A)", color: "#76a865", defaultOff: true,
         info: ["Grade A, “Best”: the areas HOLC's surveyors considered safest for mortgage lending -- almost always newer, whiter, and more affluent neighborhoods.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
-      { node: "redlining_b", label: "“Still Desirable” (B)", color: "#7cb5bd",
+      { node: "redlining_b", label: "“Still Desirable” (B)", color: "#7cb5bd", defaultOff: true,
         info: ["Grade B, “Still Desirable”: stable, already-established neighborhoods -- one step down from “Best,” not yet considered at risk.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
-      { node: "redlining_c", label: "“Definitely Declining” (C)", color: "#ffff00",
+      { node: "redlining_c", label: "“Definitely Declining” (C)", color: "#ffff00", defaultOff: true,
         info: ["Grade C, “Definitely Declining”: the largest single category in most surveyed cities, including Macon -- areas HOLC considered risky, often citing the age of the housing stock or proximity to lower-graded areas.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
-      { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d",
+      { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d", defaultOff: true,
         info: ["Grade D, “Hazardous” -- the literal “redlined” areas. The original surveyors' own notes routinely cited “negro concentration” or “infiltration of a lower grade population” as the reason, regardless of actual home values or housing quality.", "Banks used this grade for decades to deny mortgages and insurance -- a major, well-documented driver of the racial wealth gap that persists today. From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
     ],
   },
