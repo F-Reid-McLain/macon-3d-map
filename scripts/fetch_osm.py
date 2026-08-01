@@ -37,6 +37,8 @@ QUERY = f"""
   relation["natural"="water"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
   way["amenity"="parking"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
   relation["amenity"="parking"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
+  way["aeroway"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
+  relation["aeroway"]({BBOX[0]},{BBOX[1]},{BBOX[2]},{BBOX[3]});
 );
 out body;
 >;

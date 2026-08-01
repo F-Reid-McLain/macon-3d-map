@@ -171,9 +171,46 @@ water = gpd.GeoDataFrame(
 )
 print(f"water features: {len(water)} ({len(water_polys)} polygons, {len(water_lines)} river lines)")
 
+# ---- aeroway (runways/taxiways/aprons) -- real pavement geometry, not just
+# the hangar buildings (those already come through as ordinary `building`
+# ways above). Runways are mapped inconsistently in OSM: some as a real
+# closed-ring polygon (its actual paved width), most as a bare centerline
+# with no width info at all -- kept as two different `kind`s ("runway_area"
+# vs "runway_line") so the consumer can drape the polygon directly but buffer
+# the line by a real assumed width. Taxiways/taxilanes are essentially always
+# centerlines. Aprons (where aircraft actually park -- the closest real
+# equivalent to a "parking lot" at an airport) are real closed-ring polygons.
+aeroway_rows = []
+for wid, way in ways.items():
+    tags = way.get("tags", {})
+    aw = tags.get("aeroway")
+    if aw not in ("runway", "taxiway", "taxilane", "apron"):
+        continue
+    coords = way_coords(way)
+    if len(coords) < 2:
+        continue
+    is_closed = len(coords) >= 4 and coords[0] == coords[-1]
+    if aw == "runway":
+        kind = "runway_area" if is_closed else "runway_line"
+    elif aw == "apron":
+        if not is_closed:
+            continue
+        kind = "apron"
+    else:
+        kind = "taxiway"
+    geom = Polygon(coords) if kind in ("runway_area", "apron") else LineString(coords)
+    if geom.is_empty or (kind in ("runway_area", "apron") and (not geom.is_valid or geom.area <= 0)):
+        continue
+    aeroway_rows.append({"id": wid, "kind": kind, "ref": tags.get("ref", ""), "geometry": geom})
+
+aeroway = gpd.GeoDataFrame(aeroway_rows, crs="EPSG:4326")
+print(f"aeroway features: {len(aeroway)}")
+
 buildings.to_file("data/buildings_raw.geojson", driver="GeoJSON")
 roads.to_file("data/roads_raw.geojson", driver="GeoJSON")
 water.to_file("data/water_raw.geojson", driver="GeoJSON")
+if len(aeroway):
+    aeroway.to_file("data/aeroway_raw.geojson", driver="GeoJSON")
 
 # ---- parking lots (surface lots only -- multi-storey/structured parking
 # decks are already tagged `building` and captured as building volumes above,

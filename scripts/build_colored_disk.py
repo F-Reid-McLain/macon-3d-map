@@ -55,6 +55,9 @@ COLORS = {
     "road": [120, 120, 120, 255],
     "parking": [150, 144, 167, 255],
     "water": [70, 120, 200, 255],
+    "runway": [60, 60, 66, 255],
+    "taxiway": [138, 128, 96, 255],
+    "apron": [172, 166, 150, 255],
     "landmark": [184, 147, 74, 255],
 }
 
@@ -147,7 +150,7 @@ COMMUTING_COLOR_RAMPS = {
 # checkboxes. "terrain" is deliberately NOT toggleable in the UI (hiding the
 # ground plane isn't useful), but it's still its own node for consistency.
 CATEGORIES = [
-    "terrain", "water", "road", "parking",
+    "terrain", "water", "road", "parking", "runway", "taxiway", "apron",
     "hospital", "government", "mercer", "landmark",
     "residential", "commercial", "industrial", "agricultural", "other", "unclassified",
     "redlining_a", "redlining_b", "redlining_c", "redlining_d",
@@ -195,6 +198,19 @@ ROAD_WIDTH_M = {
     "secondary_link": 8, "tertiary_link": 8,
 }
 ROAD_WIDTH_DEFAULT_M = 6  # residential/service/unclassified/living_street/road/track
+
+# Real-world widths (meters) for aeroway features mapped in OSM as a bare
+# centerline with no width tag -- the overwhelming majority of taxiways and
+# about a third of runways here, per data/aeroway_raw.geojson. Where a way IS
+# already mapped as a real closed-ring polygon (kind == "runway_area"/
+# "apron"), that real shape is draped directly instead -- these two widths
+# are only the fallback for buffering a centerline. Typical values for a
+# regional/GA airport (Middle Georgia Regional, Macon Downtown), not
+# precision engineering figures -- OSM's one `width` tag found in this data
+# (a runway tagged "91", ambiguously unitless) wasn't trustworthy enough to
+# build a per-feature lookup from.
+RUNWAY_WIDTH_M = 45
+TAXIWAY_WIDTH_M = 15
 REDLINING_LIFT_MM = 25.0  # clears typical rooftops (tallest building in this model is ~21mm) -- these
                            # are neighborhood-scale historical boundaries, meant to read as a translucent
                            # wash hovering over an area regardless of what's built there today, not a
@@ -243,6 +259,10 @@ def classify_zoning(code):
 parking_all = None
 if os.path.exists("data/parking_raw.geojson"):
     parking_all = gpd.read_file("data/parking_raw.geojson").to_crs(bg.UTM_CRS)
+
+aeroway_all = None
+if os.path.exists("data/aeroway_raw.geojson"):
+    aeroway_all = gpd.read_file("data/aeroway_raw.geojson").to_crs(bg.UTM_CRS)
 
 zoning_all = None
 if os.path.exists("data/parcels_zoning.geojson"):
@@ -365,7 +385,14 @@ def build_colored_tile(tile_name, clip_shape_m):
     else:
         pk = parking_all
 
-    if len(b) == 0 and len(r) == 0 and (pk is None or len(pk) == 0):
+    if aeroway_all is not None:
+        aw = aeroway_all[aeroway_all.intersects(clip_shape_m)].copy()
+        aw["geometry"] = aw["geometry"].intersection(clip_shape_m)
+        aw = aw[~aw["geometry"].is_empty]
+    else:
+        aw = aeroway_all
+
+    if len(b) == 0 and len(r) == 0 and (pk is None or len(pk) == 0) and (aw is None or len(aw) == 0):
         return None
 
     result = {cat: [] for cat in CATEGORIES}
@@ -466,6 +493,43 @@ def build_colored_tile(tile_name, clip_shape_m):
                 decal.apply_translation([0, 0, tz + DECAL_LIFT_MM])
                 decal.visual.face_colors = COLORS["parking"]
                 result["parking"].append(decal)
+
+    # ---- aeroway (runways/taxiways/aprons): same terrain-draped decal
+    # approach as roads. Real closed-ring polygons (runway_area/apron) are
+    # used directly; bare centerlines (runway_line/taxiway -- most of what
+    # OSM actually has here) are buffered to a fixed realistic width first
+    # (RUNWAY_WIDTH_M/TAXIWAY_WIDTH_M). Kept as three separate toggleable
+    # categories rather than folded into "road" -- visually and functionally
+    # distinct pavement, and aprons are the real-world equivalent of a
+    # "parking lot" for aircraft. ----
+    if aw is not None and len(aw):
+        runway_shapes_utm, taxiway_shapes_utm, apron_shapes_utm = [], [], []
+        for kind, geom_utm in zip(aw["kind"], aw["geometry"]):
+            if geom_utm.is_empty:
+                continue
+            if kind == "runway_area":
+                runway_shapes_utm.append(geom_utm)
+            elif kind == "runway_line" and geom_utm.length > 0:
+                runway_shapes_utm.append(geom_utm.buffer(RUNWAY_WIDTH_M / 2, cap_style="flat", join_style="mitre"))
+            elif kind == "taxiway" and geom_utm.length > 0:
+                taxiway_shapes_utm.append(geom_utm.buffer(TAXIWAY_WIDTH_M / 2, cap_style="flat", join_style="mitre"))
+            elif kind == "apron":
+                apron_shapes_utm.append(geom_utm)
+
+        for cat, shapes_utm in (("runway", runway_shapes_utm), ("taxiway", taxiway_shapes_utm), ("apron", apron_shapes_utm)):
+            if not shapes_utm:
+                continue
+            union_utm = unary_union(shapes_utm)
+            clusters = union_utm.geoms if isinstance(union_utm, BaseMultipartGeometry) else [union_utm]
+            for cluster_utm in clusters:
+                if cluster_utm.is_empty or cluster_utm.area <= 0:
+                    continue
+                try:
+                    decal = drape_polygon_mesh(cluster_utm, ox, oy, ROAD_DECAL_LIFT_MM, COLORS[cat])
+                except Exception:
+                    continue
+                if decal is not None:
+                    result[cat].append(decal)
 
     if cut_shapes and plate_mesh.is_volume:
         plate_mesh.merge_vertices()
