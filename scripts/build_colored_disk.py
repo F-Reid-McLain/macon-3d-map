@@ -105,6 +105,13 @@ DEMOGRAPHIC_VARS = [
     ("labor_force_participation", "demo_labor_force"),
     ("median_household_income", "demo_income"),
     ("homeownership_rate", "demo_homeownership"),
+    # top-level occupation mix (standard ACS/SOC 5-way split) -- added for
+    # the workforce-trends angle, see docs/OVERLAYS.md.
+    ("pct_occ_management", "demo_occ_management"),
+    ("pct_occ_service", "demo_occ_service"),
+    ("pct_occ_sales_office", "demo_occ_sales_office"),
+    ("pct_occ_natural_resources", "demo_occ_natural_resources"),
+    ("pct_occ_production", "demo_occ_production"),
 ]
 DEMOGRAPHIC_COLOR_RAMPS = {
     "demo_race_black": [[247, 247, 247, 255], [204, 204, 204, 255], [150, 150, 150, 255], [99, 99, 99, 255], [37, 37, 37, 255]],
@@ -112,6 +119,11 @@ DEMOGRAPHIC_COLOR_RAMPS = {
     "demo_labor_force": [[254, 237, 222, 255], [253, 190, 133, 255], [253, 141, 60, 255], [230, 85, 13, 255], [166, 54, 3, 255]],
     "demo_income": [[239, 243, 255, 255], [189, 215, 231, 255], [107, 174, 214, 255], [49, 130, 189, 255], [8, 81, 156, 255]],
     "demo_homeownership": [[237, 248, 233, 255], [186, 228, 179, 255], [116, 196, 118, 255], [49, 163, 84, 255], [0, 109, 44, 255]],
+    "demo_occ_management": [[246, 239, 247, 255], [189, 201, 225, 255], [103, 169, 207, 255], [28, 144, 153, 255], [1, 108, 89, 255]],
+    "demo_occ_service": [[254, 235, 226, 255], [251, 180, 185, 255], [247, 104, 161, 255], [197, 27, 138, 255], [122, 1, 119, 255]],
+    "demo_occ_sales_office": [[255, 255, 229, 255], [255, 247, 188, 255], [254, 227, 145, 255], [254, 196, 79, 255], [217, 95, 14, 255]],
+    "demo_occ_natural_resources": [[246, 232, 195, 255], [223, 194, 125, 255], [191, 129, 45, 255], [140, 81, 10, 255], [84, 48, 5, 255]],
+    "demo_occ_production": [[254, 229, 217, 255], [252, 174, 145, 255], [251, 106, 74, 255], [222, 45, 38, 255], [165, 15, 21, 255]],
 }
 
 # Every node name that ends up in the exported Scene, in legend order -- also
@@ -124,6 +136,7 @@ CATEGORIES = [
     "residential", "commercial", "industrial", "agricultural", "other", "unclassified",
     "redlining_a", "redlining_b", "redlining_c", "redlining_d",
     "demo_race_black", "demo_education", "demo_labor_force", "demo_income", "demo_homeownership",
+    "demo_occ_management", "demo_occ_service", "demo_occ_sales_office", "demo_occ_natural_resources", "demo_occ_production",
 ]
 
 DECAL_HEIGHT_MM = 0.12

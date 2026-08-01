@@ -88,14 +88,23 @@ collision when overlays and base-map categories are on screen together.
 
 ## Demographics today (Census ACS 5-year estimates)
 
-**What it is.** Five present-day Census block group metrics, shown
+**What it is.** Ten present-day Census block group metrics, shown
 deliberately alongside the redlining overlay above so the two can be
-compared directly: % Black or African American (the exact dimension HOLC
-grading discriminated on, not a general "race" composite), % with a
-Bachelor's degree or higher, labor force participation rate, median
-household income, and homeownership rate. Income and homeownership were
-added beyond what was originally asked for because they're the two most
-commonly-cited metrics in actual redlining-legacy research.
+compared directly. Five general demographics: % Black or African American
+(the exact dimension HOLC grading discriminated on, not a general "race"
+composite), % with a Bachelor's degree or higher, labor force participation
+rate, median household income, and homeownership rate (income and
+homeownership were added beyond what was originally asked for because
+they're the two most commonly-cited metrics in actual redlining-legacy
+research). Plus five top-level occupation categories (the standard ACS/SOC
+split: management/business/science/arts, service, sales and office, natural
+resources/construction/maintenance, and production/transportation/material
+moving) — added for the workforce-trends angle this project's creator
+brings professionally; see `scripts/fetch_demographics.py` for exactly which
+ACS table each comes from and why (the occupation categories specifically
+needed the detailed table C24010, not the simpler subject table S2401 that
+publishes the same split pre-computed, since subject tables don't go down to
+block group in the 5-year ACS).
 
 **Data source.** US Census Bureau ACS 5-year estimates (2022 vintage),
 fetched via the public Census API (`api.census.gov`), which now requires a
@@ -115,7 +124,7 @@ groups into 5 classes (roughly equal COUNTS per class, standard choropleth
 practice, not equal-width value ranges that one outlier could skew) and
 colors each from a 5-step sequential ColorBrewer ramp
 (`DEMOGRAPHIC_COLOR_RAMPS`). Unlike redlining, all 5 buckets of one variable
-merge into **one** scene node — 5 variables × 5 buckets as 25 separate
+merge into **one** scene node — 10 variables × 5 buckets as 50 separate
 toggle rows would be unusable, so the toggle granularity is "show this
 variable" not "show this specific range." `site/template.html`'s legend
 renders a small 5-swatch gradient strip per row (`.ramp-swatch`) instead of

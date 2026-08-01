@@ -884,6 +884,17 @@ const LEGEND_SECTIONS = [
       { node: "demo_homeownership", label: "Homeownership rate", ramp: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"], defaultOff: true },
     ],
   },
+  {
+    heading: "Occupation mix (Census ACS 5-year estimates)",
+    note: "The standard 5-category occupation split, each as % of the civilian employed population 16+ by Census block group -- lightest = lowest fifth of block groups, darkest = highest fifth. Source: US Census Bureau ACS 5-year estimates, table C24010.",
+    rows: [
+      { node: "demo_occ_management", label: "Management, business, science & arts", ramp: ["#f6eff7", "#bdc9e1", "#67a9cf", "#1c9099", "#016c59"], defaultOff: true },
+      { node: "demo_occ_service", label: "Service occupations", ramp: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"], defaultOff: true },
+      { node: "demo_occ_sales_office", label: "Sales and office", ramp: ["#ffffe5", "#fff7bc", "#fee391", "#fec44f", "#d95f0e"], defaultOff: true },
+      { node: "demo_occ_natural_resources", label: "Natural resources, construction & maintenance", ramp: ["#f6e8c3", "#dfc27d", "#bf812d", "#8c510a", "#543005"], defaultOff: true },
+      { node: "demo_occ_production", label: "Production, transportation & material moving", ramp: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"], defaultOff: true },
+    ],
+  },
 ];
 
 // buildings are colored via per-vertex COLOR_0 data (each face's real
