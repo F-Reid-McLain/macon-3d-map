@@ -1762,7 +1762,9 @@ function bindHoldButton(el, onDown, onUp) {
 bindHoldButton(document.getElementById("touch-up"), () => { touchVertical = 1; }, () => { touchVertical = 0; });
 bindHoldButton(document.getElementById("touch-down"), () => { touchVertical = -1; }, () => { touchVertical = 0; });
 
-const MOVE_SPEED = 220; // mm/sec (this model's local unit), matches the ~900mm-wide disk
+const MOVE_SPEED = 220; // mm/sec (this model's local unit), matches the ~900mm-wide disk -- full
+                         // speed at/above SPEED_REFERENCE_ALTITUDE, scaled down closer to the ground
+                         // (see altitudeAboveGround/updateMovement below)
 const BOOST_MULTIPLIER = 3;
 
 // ---- collision: keeps the free-roam camera from clipping through the
@@ -1774,17 +1776,34 @@ const collisionRaycaster = new THREE.Raycaster();
 const MIN_CLEARANCE = 8; // mm -- closest the camera can get to any surface
 const EYE_CLEARANCE = 6; // mm -- how far above the ground/roof directly below the camera sits
 
+// Fixed MOVE_SPEED felt fine at the county-wide default view but wildly too
+// fast once zoomed in close to a single building (a building here is often
+// well under 1mm tall -- 220mm/sec crosses it in a fraction of a second).
+// Tracked once per frame from the same downward raycast clampToSurface()
+// already does (no extra raycast needed) and used to scale speed in
+// updateMovement() -- full speed at/above a county-scale altitude, scaled
+// down for fine control close to the ground, with a floor so it's slow, not
+// frozen, right up against a surface.
+let groundAltitude = 300; // mm -- seeded to roughly the default view's height until the first raycast lands
+const SPEED_REFERENCE_ALTITUDE_MM = 250;
+const MIN_SPEED_SCALE = 0.05;
+
 function clampToSurface() {
   collisionRaycaster.set(camera.position.clone().setY(camera.position.y + 1000), new THREE.Vector3(0, -1, 0));
   collisionRaycaster.far = 3000;
   const hits = collisionRaycaster.intersectObject(modelGroup, true);
-  if (hits.length && camera.position.y < hits[0].point.y + EYE_CLEARANCE) {
-    camera.position.y = hits[0].point.y + EYE_CLEARANCE;
+  if (hits.length) {
+    groundAltitude = camera.position.y - hits[0].point.y;
+    if (camera.position.y < hits[0].point.y + EYE_CLEARANCE) {
+      camera.position.y = hits[0].point.y + EYE_CLEARANCE;
+      groundAltitude = EYE_CLEARANCE;
+    }
   }
 }
 
 function updateMovement(dt) {
-  let speed = MOVE_SPEED * dt;
+  const speedScale = Math.min(1, Math.max(MIN_SPEED_SCALE, groundAltitude / SPEED_REFERENCE_ALTITUDE_MM));
+  let speed = MOVE_SPEED * speedScale * dt;
   if (keys.has("ShiftLeft") || keys.has("ShiftRight")) speed *= BOOST_MULTIPLIER;
   // touch joystick: how far the stick is pushed (0-1) scales speed up toward
   // BOOST_MULTIPLIER instead of needing a separate boost button -- a light
