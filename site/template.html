@@ -195,6 +195,67 @@
   .legend-label.no-toggle {
     cursor: default;
   }
+  /* small circular (i) button, one per row -- opens #info-modal with that
+     row's specific explanation instead of just the section-level note,
+     which used to be the only documentation available (one blurb shared by
+     up to 5 rows at once, e.g. all 5 occupation categories). */
+  .info-btn {
+    flex: none;
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 50%;
+    border: 1px solid var(--paper-dim);
+    background: transparent;
+    color: var(--paper-dim);
+    font-size: 0.62rem;
+    font-family: "IBM Plex Mono", monospace;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .info-btn:hover, .info-btn:focus-visible {
+    border-color: var(--brass-bright);
+    color: var(--brass-bright);
+  }
+
+  /* collapsible section headings -- with 7+ sections and ~30 rows once every
+     overlay is counted, an always-fully-expanded flat list got unwieldy.
+     Data-overlay sections (redlining/demographics/occupation/commuting)
+     start collapsed by default (see buildLegend()'s SECTIONS_EXPANDED_BY_DEFAULT)
+     since they're the least likely to be everyone's first stop; base-map
+     sections start open as before. */
+  .legend-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0.75rem 0 0.25rem;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+  .legend-section-heading .desc { margin: 0; }
+  .legend-section-heading .chevron {
+    flex: none;
+    font-size: 0.7rem;
+    color: var(--paper-dim);
+    transition: transform 0.15s ease;
+    margin-left: 0.5rem;
+  }
+  .legend-section.collapsed .chevron { transform: rotate(-90deg); }
+  .legend-section-body {
+    overflow: hidden;
+  }
+  .legend-section.collapsed .legend-section-body {
+    display: none;
+  }
   /* .swatch is a <button> reset to look like the plain colored square it
      always was -- but for building categories it's ALSO independently
      clickable (see buildLegend()'s highlightable rows) to grey out just
@@ -529,6 +590,59 @@
   }
   #intro-dismiss:hover { background: var(--brass-bright); }
 
+  /* ---------- info modal: generic, reused for every legend row's (i)
+     button -- same visual language as #intro-modal but its content is set
+     dynamically per click rather than fixed markup. ---------- */
+  #info-modal {
+    position: absolute;
+    inset: 0;
+    z-index: 46;
+    background: rgba(18,24,26,0.82);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    transition: opacity 0.2s ease;
+  }
+  #info-modal.hidden { display: none; }
+  #info-card {
+    background: var(--ink-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    max-width: 420px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 1.4rem 1.5rem;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  #info-card h3 {
+    margin: 0 0 0.7rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    padding-right: 1.5rem;
+  }
+  #info-card p {
+    font-size: 0.82rem;
+    line-height: 1.55;
+    color: var(--paper-dim);
+    margin: 0 0 0.7rem;
+  }
+  #info-card p:last-of-type { margin-bottom: 0; }
+  #info-close {
+    display: block;
+    margin-top: 1rem;
+    padding: 0.55rem 1rem;
+    background: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--paper);
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  #info-close:hover { border-color: var(--brass-bright); color: var(--brass-bright); }
+
   /* rotate-to-landscape prompt: hidden by default, shown only via JS when
      the device is both touch-primary AND currently in portrait -- desktop
      visitors and anyone already in landscape never see it (see the
@@ -654,6 +768,14 @@
         <p>This map is built for landscape — turn your phone sideways for the full view.</p>
       </div>
       <button id="intro-dismiss" type="button">Explore the map</button>
+    </div>
+  </div>
+
+  <div id="info-modal" class="hidden">
+    <div id="info-card">
+      <h3 id="info-title"></h3>
+      <div id="info-body"></div>
+      <button id="info-close" type="button">Close</button>
     </div>
   </div>
 
@@ -844,63 +966,97 @@ const CATEGORY_COLOR = {
 // plane isn't useful, so it's listed but not made interactive.
 const LEGEND_SECTIONS = [
   { rows: [
-    { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital", building: true },
-    { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government", building: true },
-    { node: "mercer", label: "Mercer University", color: "#f28c28", countId: "count-mercer", building: true },
-    { node: "landmark", label: "Other named landmarks", color: "#b8934a", countId: "count-landmark", building: true },
+    { node: "hospital", label: "Hospitals", color: "#d62728", countId: "count-hospital", building: true,
+      info: ["Buildings tagged as hospitals in OpenStreetMap, colored red regardless of what the parcel is actually zoned for.", "Special-cased ahead of zoning, like the other three rows in this group, because a hospital's real-world significance doesn't depend on its zoning code."] },
+    { node: "government", label: "Government / public", color: "#1f4e9c", countId: "count-government", building: true,
+      info: ["Government and public-service buildings from OpenStreetMap tags (town halls, government offices, and similar), colored blue regardless of zoning -- same reasoning as hospitals above."] },
+    { node: "mercer", label: "Mercer University", color: "#f28c28", countId: "count-mercer", building: true,
+      info: ["Mercer University's campus buildings, tagged in OpenStreetMap and colored orange regardless of zoning -- the campus's own zoning code wouldn't tell you anything useful about what each individual building actually is."] },
+    { node: "landmark", label: "Other named landmarks", color: "#b8934a", countId: "count-landmark", building: true,
+      info: ["A small, hand-picked list of specific named buildings worth calling out individually (Fickling & Company Building, Godsey Science Center, and a few others) rather than leaving them colored by generic zoning."] },
   ] },
   { heading: "Other buildings, by zoning", rows: [
-    { node: "residential", label: "Residential", color: "#deb887", building: true },
-    { node: "commercial", label: "Commercial", color: "#9b59b6", building: true },
-    { node: "industrial", label: "Industrial", color: "#7f8c8d", building: true },
-    { node: "agricultural", label: "Agricultural", color: "#9aa54c", building: true },
-    { node: "other", label: "Other / planned development", color: "#bebebe", building: true },
-    { node: "unclassified", label: "Unclassified", color: "#d2b48c", building: true },
+    { node: "residential", label: "Residential", color: "#deb887", building: true,
+      info: ["Colored by the parcel's real zoning code from Bibb County's tax assessor parcel data (Parcel_CAMA2022), not guessed from building shape or OpenStreetMap tags.", "Covers every residential density tier (R-1 through R-3), plus historic and manufactured-home residential codes (HR, MHR)."] },
+    { node: "commercial", label: "Commercial", color: "#9b59b6", building: true,
+      info: ["Same real zoning-parcel data as Residential -- covers commercial codes C-1 through C-5, the downtown CBD district, and highway/shopping-center commercial codes (HC, SC)."] },
+    { node: "industrial", label: "Industrial", color: "#7f8c8d", building: true,
+      info: ["Same real zoning-parcel data as Residential -- covers industrial codes M-1 through M-3."] },
+    { node: "agricultural", label: "Agricultural", color: "#9aa54c", building: true,
+      info: ["Same real zoning-parcel data as Residential -- the A/AG agricultural code, mostly in the county's rural fringe."] },
+    { node: "other", label: "Other / planned development", color: "#bebebe", building: true,
+      info: ["Zoning codes that don't cleanly map to a single use category -- mainly planned-development overlays (PDE, “planned development employment”) and historic-preservation districts (HPD), which modify a base zone rather than declaring one on their own.", "Classified this way deliberately rather than guessed at -- see build_colored_disk.py's classify_zoning()."] },
+    { node: "unclassified", label: "Unclassified", color: "#d2b48c", building: true,
+      info: ["Buildings whose tax parcel had no zoning code on file at all (about 0.4% of parcels) or listed something that didn't match any known code.", "Falls back to this flat tan rather than guessing at a category with no real data behind it."] },
   ] },
   { heading: "Other features", rows: [
-    { node: "road", label: "Roads", color: "#787878" },
-    { node: "parking", label: "Parking lots", color: "#9690a7" },
-    { node: "water", label: "Water", color: "#4678c8" },
-    { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true },
+    { node: "road", label: "Roads", color: "#787878",
+      info: ["Real road centerlines from OpenStreetMap, buffered into a paintable ribbon (width tiered by road class -- highways read wider than residential streets) and draped onto the actual terrain surface vertex by vertex, so it follows real elevation changes instead of sitting at one flat height."] },
+    { node: "parking", label: "Parking lots", color: "#9690a7",
+      info: ["Real parking lot footprints from OpenStreetMap, rendered as a thin decal flush with the terrain."] },
+    { node: "water", label: "Water", color: "#4678c8",
+      info: ["Rivers and standing water from OpenStreetMap, cut as a real recess into the terrain (not just colored flat) so it reads as a genuine depression, with a matching blue decal resting at the bottom of the cut."] },
+    { node: "terrain", label: "Terrain (2.5x exaggerated)", color: "#5aa05a", noToggle: true,
+      info: ["Real USGS 3DEP elevation data, vertically exaggerated 2.5x so Macon's actual relief -- especially the river bluff downtown -- reads clearly at this scale instead of looking flat.", "Can't be hidden; there's not much point in a relief map with no ground."] },
   ] },
   {
     heading: "Historical redlining (1938 HOLC survey)",
     note: "The federal Home Owners' Loan Corporation graded neighborhoods for mortgage risk in the 1930s -- “D”/red areas (majority-Black or immigrant neighborhoods, regardless of actual home values) were “redlined”: denied loans on that basis alone. Macon was among the most severely redlined cities in the country. Floats above the buildings as a translucent layer so it reads as an overlay, not a replacement for today's map. Source: University of Richmond's Mapping Inequality project (see the in-app credit at the bottom of this panel).",
+    collapsedByDefault: true,
     rows: [
-      { node: "redlining_a", label: "“Best” (A)", color: "#76a865" },
-      { node: "redlining_b", label: "“Still Desirable” (B)", color: "#7cb5bd" },
-      { node: "redlining_c", label: "“Definitely Declining” (C)", color: "#ffff00" },
-      { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d" },
+      { node: "redlining_a", label: "“Best” (A)", color: "#76a865",
+        info: ["Grade A, “Best”: the areas HOLC's surveyors considered safest for mortgage lending -- almost always newer, whiter, and more affluent neighborhoods.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
+      { node: "redlining_b", label: "“Still Desirable” (B)", color: "#7cb5bd",
+        info: ["Grade B, “Still Desirable”: stable, already-established neighborhoods -- one step down from “Best,” not yet considered at risk.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
+      { node: "redlining_c", label: "“Definitely Declining” (C)", color: "#ffff00",
+        info: ["Grade C, “Definitely Declining”: the largest single category in most surveyed cities, including Macon -- areas HOLC considered risky, often citing the age of the housing stock or proximity to lower-graded areas.", "From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
+      { node: "redlining_d", label: "“Hazardous” (D) — i.e. redlined", color: "#d9838d",
+        info: ["Grade D, “Hazardous” -- the literal “redlined” areas. The original surveyors' own notes routinely cited “negro concentration” or “infiltration of a lower grade population” as the reason, regardless of actual home values or housing quality.", "Banks used this grade for decades to deny mortgages and insurance -- a major, well-documented driver of the racial wealth gap that persists today. From the original 1930s HOLC survey maps, via University of Richmond's Mapping Inequality project."] },
     ],
   },
   {
     heading: "Demographics today (Census ACS 5-year estimates)",
     note: "By Census block group, lightest = lowest fifth of block groups, darkest = highest fifth. Shown alongside 1938 redlining on purpose -- toggle both to see how closely today's patterns still track the original grades. “% Black or African American” is shown (not a general “race” composite) because that's the specific dimension HOLC grading discriminated on. Source: US Census Bureau ACS 5-year estimates.",
+    collapsedByDefault: true,
     rows: [
-      { node: "demo_race_black", label: "% Black or African American", ramp: ["#f7f7f7", "#cccccc", "#969696", "#636363", "#252525"], defaultOff: true },
-      { node: "demo_education", label: "% Bachelor's degree or higher", ramp: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"], defaultOff: true },
-      { node: "demo_labor_force", label: "Labor force participation", ramp: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"], defaultOff: true },
-      { node: "demo_income", label: "Median household income", ramp: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"], defaultOff: true },
-      { node: "demo_homeownership", label: "Homeownership rate", ramp: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"], defaultOff: true },
+      { node: "demo_race_black", label: "% Black or African American", ramp: ["#f7f7f7", "#cccccc", "#969696", "#636363", "#252525"], defaultOff: true,
+        info: ["From Census ACS table B02001, 2022 5-year estimates, by block group.", "Shown specifically -- not a general “race” composite -- because this is the exact dimension HOLC grading discriminated on. The point of this whole overlay is comparing it directly against the 1938 grades above, not describing the population in the abstract."] },
+      { node: "demo_education", label: "% Bachelor's degree or higher", ramp: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"], defaultOff: true,
+        info: ["Share of the population 25 and older holding a Bachelor's degree or higher, from Census ACS table B15003."] },
+      { node: "demo_labor_force", label: "Labor force participation", ramp: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"], defaultOff: true,
+        info: ["Share of the population 16+ that's in the labor force -- working OR actively looking for work. Not the same thing as the unemployment rate.", "From Census ACS table B23025."] },
+      { node: "demo_income", label: "Median household income", ramp: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"], defaultOff: true,
+        info: ["The middle household income in each block group -- half of households earn more, half earn less. From Census ACS table B19013.", "19 of 136 block groups have too small a sample for the Census Bureau to publish a reliable estimate and are left uncolored, rather than shown with a misleadingly precise-looking number."] },
+      { node: "demo_homeownership", label: "Homeownership rate", ramp: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"], defaultOff: true,
+        info: ["Share of occupied housing units that are owner-occupied rather than rented, from Census ACS table B25003."] },
     ],
   },
   {
     heading: "Occupation mix (Census ACS 5-year estimates)",
     note: "The standard 5-category occupation split, each as % of the civilian employed population 16+ by Census block group -- lightest = lowest fifth of block groups, darkest = highest fifth. Source: US Census Bureau ACS 5-year estimates, table C24010.",
+    collapsedByDefault: true,
     rows: [
-      { node: "demo_occ_management", label: "Management, business, science & arts", ramp: ["#f6eff7", "#bdc9e1", "#67a9cf", "#1c9099", "#016c59"], defaultOff: true },
-      { node: "demo_occ_service", label: "Service occupations", ramp: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"], defaultOff: true },
-      { node: "demo_occ_sales_office", label: "Sales and office", ramp: ["#ffffe5", "#fff7bc", "#fee391", "#fec44f", "#d95f0e"], defaultOff: true },
-      { node: "demo_occ_natural_resources", label: "Natural resources, construction & maintenance", ramp: ["#f6e8c3", "#dfc27d", "#bf812d", "#8c510a", "#543005"], defaultOff: true },
-      { node: "demo_occ_production", label: "Production, transportation & material moving", ramp: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"], defaultOff: true },
+      { node: "demo_occ_management", label: "Management, business, science & arts", ramp: ["#f6eff7", "#bdc9e1", "#67a9cf", "#1c9099", "#016c59"], defaultOff: true,
+        info: ["The “white-collar”/knowledge-economy occupation category in the Census's standard classification -- management, business, computer/engineering/science, healthcare, legal, education, and arts occupations combined.", "From ACS table C24010, summed across both sexes (the source table splits every category by sex first)."] },
+      { node: "demo_occ_service", label: "Service occupations", ramp: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"], defaultOff: true,
+        info: ["Food service, healthcare support, protective service (police/fire), personal care, and building/grounds maintenance occupations -- typically the largest single category in a service-based local economy.", "Same source/method as the category above."] },
+      { node: "demo_occ_sales_office", label: "Sales and office", ramp: ["#ffffe5", "#fff7bc", "#fee391", "#fec44f", "#d95f0e"], defaultOff: true,
+        info: ["Retail sales plus office and administrative support occupations.", "Same source/method as the categories above."] },
+      { node: "demo_occ_natural_resources", label: "Natural resources, construction & maintenance", ramp: ["#f6e8c3", "#dfc27d", "#bf812d", "#8c510a", "#543005"], defaultOff: true,
+        info: ["Farming/fishing/forestry, construction, and installation/maintenance/repair occupations.", "Same source/method as the categories above."] },
+      { node: "demo_occ_production", label: "Production, transportation & material moving", ramp: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"], defaultOff: true,
+        info: ["Factory production, transportation, and material-moving occupations -- relevant to Macon's real manufacturing and logistics employers.", "Same source/method as the categories above."] },
     ],
   },
   {
     heading: "Workforce geography (Census LODES)",
     note: "Where jobs are physically located vs. where the people who hold them live, by Census block group -- lightest = lowest fifth of block groups, darkest = highest fifth. An actual commute-flow map (lines connecting home to work) was tried and dropped: real commuting here is too spread out across thousands of block-group pairs for a small set of lines to represent honestly. Source: US Census LEHD Origin-Destination Employment Statistics (LODES), 2022.",
+    collapsedByDefault: true,
     rows: [
-      { node: "commute_jobs", label: "Jobs located here", ramp: ["#eef2f9", "#c6d4e8", "#93aed2", "#5b7fb5", "#2c4a80"], defaultOff: true },
-      { node: "commute_workers", label: "Employed workers living here", ramp: ["#fdf1e6", "#f8d5b0", "#f0ab63", "#d97e28", "#a35a12"], defaultOff: true },
+      { node: "commute_jobs", label: "Jobs located here", ramp: ["#eef2f9", "#c6d4e8", "#93aed2", "#5b7fb5", "#2c4a80"], defaultOff: true,
+        info: ["Total jobs physically located in each block group, regardless of where the workers who hold them live -- from the Census LEHD “Workplace Area Characteristics” (WAC) file.", "An origin-destination flow map (lines connecting home to work) was the original idea, tried and dropped -- see this section's note above for why."] },
+      { node: "commute_workers", label: "Employed workers living here", ramp: ["#fdf1e6", "#f8d5b0", "#f0ab63", "#d97e28", "#a35a12"], defaultOff: true,
+        info: ["Total employed residents living in each block group, regardless of where they actually work -- from the Census LEHD “Residence Area Characteristics” (RAC) file.", "Compare against “Jobs located here” to see where Macon's workforce actually lives relative to where its jobs are concentrated."] },
     ],
   },
 ];
@@ -939,6 +1095,25 @@ updateRotatePromptVisibility();
 window.addEventListener("resize", updateRotatePromptVisibility);
 document.getElementById("intro-dismiss").addEventListener("click", () => {
   introModal.classList.add("hidden");
+});
+
+// ---- info modal: generic popup for each legend row's (i) button, opened
+// with per-row content (see LEGEND_SECTIONS rows' `info` field, an array of
+// paragraph strings) instead of only having the one shared per-section note
+// this used to be limited to. ----
+const infoModal = document.getElementById("info-modal");
+const infoTitle = document.getElementById("info-title");
+const infoBody = document.getElementById("info-body");
+function openInfoModal(title, paragraphs) {
+  infoTitle.textContent = title;
+  infoBody.innerHTML = paragraphs.map(p => `<p>${p}</p>`).join("");
+  infoModal.classList.remove("hidden");
+}
+document.getElementById("info-close").addEventListener("click", () => {
+  infoModal.classList.add("hidden");
+});
+infoModal.addEventListener("click", (e) => {
+  if (e.target === infoModal) infoModal.classList.add("hidden"); // click on the dim backdrop itself
 });
 
 // ---- logging (same philosophy as before: this page can't be browser-tested
@@ -1201,13 +1376,44 @@ function buildLegend(categoryMeshes) {
   });
   rowsEl.appendChild(highlightToggleLink);
 
+  // (i) button markup for a row, if it has an `info` array -- opens the
+  // shared info modal with that row's specific explanation. Kept as its own
+  // small helper since every row branch below (noToggle, disabled/no-mesh,
+  // normal) needs to append the same thing.
+  function infoBtnHtml(row) {
+    if (!row.info) return "";
+    return `<button type="button" class="info-btn" aria-label="About ${row.label}">i</button>`;
+  }
+  function wireInfoBtn(rowEl, row) {
+    if (!row.info) return;
+    rowEl.querySelector(".info-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openInfoModal(row.label, row.info);
+    });
+  }
+
   for (const section of LEGEND_SECTIONS) {
+    // sections without a heading (just the top hospitals/government/mercer/
+    // landmark group) stay flat and always-expanded, same as before --
+    // collapsibility only applies to headed sections, and data-overlay
+    // sections start collapsed (see LEGEND_SECTIONS' collapsedByDefault)
+    // since with 12 overlay rows now, having them all expanded by default
+    // buried the base map categories below a wall of rows nobody asked for
+    // yet.
+    let bodyEl = rowsEl;
     if (section.heading) {
-      const p = document.createElement("p");
-      p.className = "desc";
-      p.style.margin = "0.75rem 0 0.25rem";
-      p.textContent = section.heading;
-      rowsEl.appendChild(p);
+      const sectionEl = document.createElement("div");
+      sectionEl.className = "legend-section" + (section.collapsedByDefault ? " collapsed" : "");
+      const headingBtn = document.createElement("button");
+      headingBtn.type = "button";
+      headingBtn.className = "legend-section-heading";
+      headingBtn.innerHTML = `<span class="desc">${section.heading}</span><span class="chevron">▾</span>`;
+      bodyEl = document.createElement("div");
+      bodyEl.className = "legend-section-body";
+      headingBtn.addEventListener("click", () => sectionEl.classList.toggle("collapsed"));
+      sectionEl.appendChild(headingBtn);
+      sectionEl.appendChild(bodyEl);
+      rowsEl.appendChild(sectionEl);
     }
     for (const row of section.rows) {
       const id = "vis-" + (rowId++);
@@ -1218,7 +1424,9 @@ function buildLegend(categoryMeshes) {
 
       if (row.noToggle) {
         rowEl.innerHTML = `<span class="swatch" style="background:${row.color}"></span>` +
-          `<span class="legend-label no-toggle">${row.label}${countSpan}</span>`;
+          `<span class="legend-label no-toggle">${row.label}${countSpan}</span>` +
+          infoBtnHtml(row);
+        wireInfoBtn(rowEl, row);
       } else {
         const swatchTag = row.building && mesh ? "button" : "span";
         const swatchAttrs = row.building && mesh ? `type="button" title="Click to un-highlight (grey out) this category"` : "";
@@ -1236,7 +1444,9 @@ function buildLegend(categoryMeshes) {
         rowEl.innerHTML =
           `<input type="checkbox" id="${id}"${startChecked ? " checked" : ""}>` +
           swatchHtml +
-          `<label for="${id}" class="legend-label">${row.label}${countSpan}</label>`;
+          `<label for="${id}" class="legend-label">${row.label}${countSpan}</label>` +
+          infoBtnHtml(row);
+        wireInfoBtn(rowEl, row);
         const checkbox = rowEl.querySelector("input");
         const swatch = rowEl.querySelector(".swatch");
         if (!mesh) {
@@ -1263,14 +1473,14 @@ function buildLegend(categoryMeshes) {
           }
         }
       }
-      rowsEl.appendChild(rowEl);
+      bodyEl.appendChild(rowEl);
     }
     if (section.note) {
       const noteEl = document.createElement("p");
       noteEl.className = "desc";
       noteEl.style.margin = "0.4rem 0 0.5rem";
       noteEl.textContent = section.note;
-      rowsEl.appendChild(noteEl);
+      bodyEl.appendChild(noteEl);
     }
   }
   refreshHighlightLinkText();
@@ -1281,9 +1491,17 @@ function buildLegend(categoryMeshes) {
   const placeId = "vis-" + (rowId++);
   const placeRow = document.createElement("div");
   placeRow.className = "legend-row";
-  placeRow.innerHTML = `<input type="checkbox" id="${placeId}" checked><span class="swatch" style="background:var(--brass)"></span><label for="${placeId}" class="legend-label">Place labels</label>`;
+  placeRow.innerHTML = `<input type="checkbox" id="${placeId}" checked><span class="swatch" style="background:var(--brass)"></span><label for="${placeId}" class="legend-label">Place labels</label>` +
+    `<button type="button" class="info-btn" aria-label="About place labels">i</button>`;
   placeRow.querySelector("input").addEventListener("change", (e) => {
     placeLabelsVisible = e.target.checked;
+  });
+  placeRow.querySelector(".info-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openInfoModal("Place labels", [
+      "Highway routes, neighborhoods, industrial areas, and smaller communities from OpenStreetMap, positioned in the model and faded in by camera distance so all ~265 of them aren't visible at once.",
+      "Highways and industrial areas (shield badges / small caps) show from farthest away, neighborhoods at medium range, and smaller communities only up close.",
+    ]);
   });
   rowsEl.appendChild(placeRow);
 
