@@ -137,9 +137,21 @@ DECAL_LIFT_MM = 0.03  # clears the decal off the terrain surface it sits on -- a
 # diagonal into two flat triangles), but terrain_z_mm_batch samples true
 # bilinear interpolation -- the two don't exactly agree at sub-cell
 # precision, and 0.03mm is nowhere near enough margin to cover that noise
-# for a shape as large/varied as the whole road network. 0.45mm comfortably
-# clears the measured worst case with headroom.
-ROAD_DECAL_LIFT_MM = 0.45
+# for a shape as large/varied as the whole road network.
+#
+# This mismatch grows with DEM_SAMPLE_SPACING_M (a coarser terrain grid
+# means bigger triangles, means more room for the two surfaces to diverge
+# within one cell) -- caught when the mobile build's 40m grid (vs. the
+# desktop's 20m) regressed to a small but real -0.14mm worst case with the
+# same fixed 0.45mm that fully covered 20m. Re-measuring the same way at
+# 40m (true deviation before any lift: -0.59mm, vs. -0.35mm at 20m) showed
+# the relationship is roughly LINEAR in this DEM, not the quadratic a naive
+# "twist term scales with cell area" argument would suggest -- so this
+# scales the calibrated-at-20m value by spacing directly, rather than
+# hardcoding a second constant that would need its own re-measurement (and
+# would just as quietly go stale) every time a build uses yet another
+# resolution.
+ROAD_DECAL_LIFT_MM = 0.45 * (bg.DEM_SAMPLE_SPACING_M / 20.0)
 
 # Real-world road widths (meters) by OSM class, used for the road decal --
 # was a single flat 3.0mm (37.5 real meters!) for every road regardless of
