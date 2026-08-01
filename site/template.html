@@ -453,6 +453,109 @@
   }
 
   /* ---------- loading overlay ---------- */
+  /* ---------- intro modal: shown once per page load, above everything
+     (including the loading screen -- there's plenty to read while the
+     model decodes, so no reason to wait for it first). ---------- */
+  #intro-modal {
+    position: absolute;
+    inset: 0;
+    z-index: 45;
+    background: rgba(18,24,26,0.82);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    transition: opacity 0.3s ease;
+  }
+  #intro-modal.hidden { opacity: 0; pointer-events: none; }
+  #intro-card {
+    background: var(--ink-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    max-width: 440px;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+    padding: 1.6rem 1.7rem;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  #intro-card .mark {
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--brass-bright);
+  }
+  #intro-card h2 {
+    margin: 0.25rem 0 0.9rem;
+    font-size: 1.3rem;
+    font-weight: 700;
+  }
+  #intro-card p {
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--paper-dim);
+    margin: 0 0 0.85rem;
+  }
+  #intro-dismiss {
+    display: block;
+    width: 100%;
+    margin-top: 0.4rem;
+    padding: 0.7rem 1rem;
+    background: var(--brass);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  #intro-dismiss:hover { background: var(--brass-bright); }
+
+  /* rotate-to-landscape prompt: hidden by default, shown only via JS when
+     the device is both touch-primary AND currently in portrait -- desktop
+     visitors and anyone already in landscape never see it (see the
+     pointer:coarse + orientation check near DOMContentLoaded). */
+  #intro-rotate-prompt {
+    display: none;
+    align-items: center;
+    gap: 0.9rem;
+    margin: 1rem 0 1.2rem;
+    padding: 0.8rem 0.9rem;
+    background: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  #intro-rotate-prompt.visible { display: flex; }
+  #intro-rotate-prompt p { margin: 0; font-size: 0.78rem; color: var(--paper); flex: 1; }
+  #intro-rotate-phone {
+    flex: none;
+    width: 26px;
+    height: 44px;
+    border: 2px solid var(--brass-bright);
+    border-radius: 5px;
+    position: relative;
+    animation: intro-rotate-hint 3.2s ease-in-out infinite;
+  }
+  #intro-rotate-phone-notch {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    width: 8px;
+    height: 2px;
+    margin-left: -4px;
+    background: var(--brass-bright);
+    border-radius: 1px;
+  }
+  @keyframes intro-rotate-hint {
+    0%, 15% { transform: rotate(0deg); }
+    50%, 65% { transform: rotate(90deg); }
+    100% { transform: rotate(0deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #intro-rotate-phone { animation: none; }
+  }
+
   #loading {
     position: absolute;
     inset: 0;
@@ -520,6 +623,21 @@
   </div>
 
   <div id="viewer-container"></div>
+
+  <div id="intro-modal">
+    <div id="intro-card">
+      <div class="mark">Bibb County, Georgia</div>
+      <h2>An interactive 3D relief map</h2>
+      <p>This is a real 3D model of Macon-Bibb County — actual USGS terrain, building footprints, roads, and zoning data, placed exactly where they sit on the ground, not a stylized illustration.</p>
+      <p>The goal is to make the county's own data explorable, not just visible — including the parts most maps leave out. Toggle on 1938 federal redlining grades alongside present-day Census demographics and see for yourself how closely a map drawn nearly a century ago still predicts income, education, and homeownership today.</p>
+      <p>Fly around freely, click any building or route, and use the panel on the right to explore every layer.</p>
+      <div id="intro-rotate-prompt">
+        <div id="intro-rotate-phone"><div id="intro-rotate-phone-notch"></div></div>
+        <p>This map is built for landscape — turn your phone sideways for the full view.</p>
+      </div>
+      <button id="intro-dismiss" type="button">Explore the map</button>
+    </div>
+  </div>
 
   <div id="loading">
     <div class="mark" id="loading-mark">Loading terrain &amp; buildings</div>
@@ -767,6 +885,24 @@ const loadingEl = document.getElementById("loading");
 const loadbar = document.getElementById("loadbar");
 const panel = document.getElementById("panel");
 const panelToggle = document.getElementById("panel-toggle");
+
+// ---- intro modal: shown on every load (not gated on the model finishing --
+// there's plenty to read while it decodes), dismissed by the button. The
+// rotate-to-landscape prompt inside it only shows for touch devices
+// currently in portrait -- re-checked live on resize/orientation change so
+// it disappears mid-read if someone actually rotates while looking at it. ----
+const introModal = document.getElementById("intro-modal");
+const introRotatePrompt = document.getElementById("intro-rotate-prompt");
+function updateRotatePromptVisibility() {
+  const isTouchPortrait = window.matchMedia("(pointer: coarse)").matches
+    && window.matchMedia("(orientation: portrait)").matches;
+  introRotatePrompt.classList.toggle("visible", isTouchPortrait);
+}
+updateRotatePromptVisibility();
+window.addEventListener("resize", updateRotatePromptVisibility);
+document.getElementById("intro-dismiss").addEventListener("click", () => {
+  introModal.classList.add("hidden");
+});
 
 // ---- logging (same philosophy as before: this page can't be browser-tested
 // from where it's built, so a visible on-page log is essential for diagnosing
