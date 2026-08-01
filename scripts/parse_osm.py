@@ -127,6 +127,10 @@ roads = gpd.GeoDataFrame(road_rows, crs="EPSG:4326")
 print(f"roads: {len(roads)}")
 
 # ---- water (rivers as lines, natural=water as ways/relations -> polygons) ----
+# `name` is kept (previously dropped entirely) so build_labels.py can label
+# real named water features (the Ocmulgee River, named creeks, the lake) --
+# an existing consumer (build_grid.py's water_all) only reads `kind`/
+# `geometry`, so this extra column is a safe, backward-compatible addition.
 water_polys = []
 for wid, way in ways.items():
     tags = way.get("tags", {})
@@ -134,7 +138,7 @@ for wid, way in ways.items():
     if tags.get("natural") == "water" and len(coords) >= 4 and coords[0] == coords[-1]:
         poly = Polygon(coords)
         if poly.is_valid and poly.area > 0:
-            water_polys.append(poly)
+            water_polys.append((poly, tags.get("name", "")))
 
 for rel in relations:
     tags = rel.get("tags", {})
@@ -150,7 +154,7 @@ for rel in relations:
                         c = c + [c[0]]
                     poly = Polygon(c)
                     if poly.is_valid and poly.area > 0:
-                        water_polys.append(poly)
+                        water_polys.append((poly, tags.get("name", "")))
 
 water_lines = []
 for wid, way in ways.items():
@@ -158,11 +162,11 @@ for wid, way in ways.items():
     if tags.get("waterway") == "river":
         coords = way_coords(way)
         if len(coords) >= 2:
-            water_lines.append(LineString(coords))
+            water_lines.append((LineString(coords), tags.get("name", "")))
 
 water = gpd.GeoDataFrame(
-    [{"kind": "area", "geometry": p} for p in water_polys] +
-    [{"kind": "line", "geometry": l} for l in water_lines],
+    [{"kind": "area", "name": n, "geometry": p} for p, n in water_polys] +
+    [{"kind": "line", "name": n, "geometry": l} for l, n in water_lines],
     crs="EPSG:4326",
 )
 print(f"water features: {len(water)} ({len(water_polys)} polygons, {len(water_lines)} river lines)")

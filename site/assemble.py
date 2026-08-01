@@ -30,11 +30,51 @@ LANDMARKS = [
     {"id": "mercer-11", "name": "Dowell Hall", "category": "mercer", "x": -167.3, "y": -19.8, "z": 16.4},
     {"id": "mercer-12", "name": "Walter F. George School of Law", "category": "mercer", "x": -73.2, "y": 77.7, "z": 20.6},
     {"id": "mercer-13", "name": "Legacy Hall", "category": "mercer", "x": -164.7, "y": -24.6, "z": 16.1},
-    {"id": "hosp-1", "name": "Atrium Health Navicent Medical Center", "category": "hospital", "x": -82.3, "y": 9.5, "z": 13.4},
+    {"id": "hosp-1", "name": "Atrium Health Navicent Medical Center", "category": "medical", "x": -82.3, "y": 9.5, "z": 13.4},
     {"id": "lm-1", "name": "Fickling & Company Building", "category": "landmark", "x": -16.5, "y": 45.5, "z": 21.3},
     {"id": "lm-2", "name": "Godsey Science Center", "category": "landmark", "x": -178.0, "y": -35.1, "z": 14.9},
     {"id": "lm-3", "name": "Walker-Shinholser-Rushin House", "category": "landmark", "x": -99.9, "y": 74.3, "z": 16.4},
     {"id": "lm-4", "name": "Macon-Bibb Chamber of Commerce", "category": "landmark", "x": 23.1, "y": 94.6, "z": 11.0},
+
+    # ---- medical (beyond the one hospital above -- clinics/hospitals found
+    # via a targeted Overpass query for amenity=hospital/clinic, since the
+    # original county-wide OSM fetch never targeted standalone medical POIs) ----
+    {"id": "med-1", "name": "Women's Health Institute", "category": "medical", "x": -513.9, "y": 727.5, "z": 18.77},
+    {"id": "med-2", "name": "Center for Ambulatory Services", "category": "medical", "x": -95.8, "y": 24.9, "z": 23.66},
+    {"id": "med-3", "name": "Piedmont Macon Medical Center", "category": "medical", "x": 47.1, "y": 117.5, "z": 19.28},
+    {"id": "med-4", "name": "Piedmont Macon North Hospital", "category": "medical", "x": -511.1, "y": 352.3, "z": 29.98},
+    {"id": "med-5", "name": "Urology Specialists of Georgia", "category": "medical", "x": -766.7, "y": 842.5, "z": 20.73},
+    {"id": "med-6", "name": "Ortho Georgia", "category": "medical", "x": -482.9, "y": 563.7, "z": 18.97},
+
+    # ---- heritage: Ocmulgee Mounds National Historical Park. Real earthwork
+    # geometry can't be reconstructed at this model's terrain resolution
+    # without fabricating detail, so it gets a marker rather than volume ----
+    {"id": "her-1", "name": "Ocmulgee Mounds National Historical Park", "category": "heritage", "x": 157.0, "y": 43.9, "z": 15.61},
+
+    # ---- notable buildings ----
+    {"id": "bld-1", "name": "Hay House", "category": "buildings", "x": -62.8, "y": 66.3, "z": 22.2},
+    {"id": "bld-2", "name": "The Grand Opera House", "category": "buildings", "x": -22.4, "y": 42.9, "z": 18.36},
+    {"id": "bld-3", "name": "Cannonball House", "category": "buildings", "x": -51.7, "y": 62.8, "z": 21.11},
+    {"id": "bld-4", "name": "Sidney Lanier Cottage", "category": "buildings", "x": -85.5, "y": 41.8, "z": 25.14},
+    {"id": "bld-5", "name": "Macon City Auditorium", "category": "buildings", "x": -46.2, "y": 39.8, "z": 19.42},
+
+    # ---- notable churches ----
+    {"id": "chr-1", "name": "Saint Joseph Catholic Church", "category": "church", "x": -64.6, "y": 36.3, "z": 22.33},
+    {"id": "chr-2", "name": "First Presbyterian Church", "category": "church", "x": -32.8, "y": 46.6, "z": 18.34},
+    {"id": "chr-3", "name": "Christ Episcopal Church", "category": "church", "x": -9.7, "y": 48.5, "z": 18.15},
+    {"id": "chr-4", "name": "Mulberry Street United Methodist Church", "category": "church", "x": -32.3, "y": 59.5, "z": 18.75},
+    {"id": "chr-5", "name": "Washington Avenue Presbyterian Church", "category": "church", "x": -77.2, "y": 48.0, "z": 23.81},
+    {"id": "chr-6", "name": "First Baptist Church", "category": "church", "x": -69.8, "y": 29.7, "z": 21.71},
+    {"id": "chr-7", "name": "Steward Chapel African Methodist Episcopal Church", "category": "church", "x": -83.1, "y": 26.9, "z": 22.55},
+    {"id": "chr-8", "name": "Temple Beth Israel", "category": "church", "x": -62.5, "y": 52.6, "z": 20.8},
+
+    # ---- music heritage ----
+    {"id": "mus-1", "name": "Little Richard House and Resource Center", "category": "music", "x": -160.8, "y": 83.2, "z": 24.86},
+    {"id": "mus-2", "name": "Otis Redding Foundation", "category": "music", "x": -32.4, "y": 40.4, "z": 18.62},
+    {"id": "mus-3", "name": "Mercer Music at Capricorn", "category": "music", "x": -16.7, "y": -1.8, "z": 17.52},
+    {"id": "mus-4", "name": "The Big House (Allman Brothers Band Museum)", "category": "music", "x": -227.2, "y": 120.3, "z": 28.45},
+    {"id": "mus-5", "name": "Rose Hill Cemetery", "category": "music", "x": -59.4, "y": 132.7, "z": 21.05},
+    {"id": "mus-6", "name": "The Douglass Theatre", "category": "music", "x": -5.4, "y": 22.1, "z": 17.86},
 ]
 
 

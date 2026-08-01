@@ -514,6 +514,7 @@
   }
   .place-label.tier-neighbourhood { font-size: 0.68rem; color: var(--paper-dim); }
   .place-label.tier-industrial { font-size: 0.72rem; color: var(--brass-bright); text-transform: uppercase; letter-spacing: 0.05em; }
+  .place-label.tier-water { font-size: 0.68rem; color: #a8c8f0; font-style: italic; }
   .place-label.tier-hamlet { font-size: 0.62rem; color: var(--paper-dim); font-weight: 400; }
   /* highway routes get a shield-badge look (pill background + border) instead
      of plain floating text, so they read as wayfinding, not a place name. */
@@ -941,22 +942,31 @@ const LABELS = __LABELS_JSON__;
 // fadeStart/fadeEnd give a smooth opacity ramp rather than a hard pop.
 const PLACE_LABEL_TIERS = {
   highway: { fadeStart: 2800, fadeEnd: 1800 },
+  water: { fadeStart: 2400, fadeEnd: 1400 },
   industrial: { fadeStart: 2200, fadeEnd: 1500 },
   neighbourhood: { fadeStart: 1100, fadeEnd: 500 },
   hamlet: { fadeStart: 550, fadeEnd: 250 },
 };
 
 const CATEGORY_LABEL = {
-  hospital: "Hospitals",
+  medical: "Medical",
   government: "Government / Public",
   mercer: "Mercer University",
+  heritage: "Native American Heritage",
+  music: "Music Heritage",
+  church: "Notable Churches",
+  buildings: "Notable Buildings",
   landmark: "Other Landmarks",
 };
 const CATEGORY_COLOR = {
-  hospital: "#d62728",
+  medical: "#d62728",
   government: "#1f4e9c",
   mercer: "#f28c28",
-  landmark: "#b8934a",
+  heritage: "#4a8f5c",
+  music: "#9b59b6",
+  church: "#2f8f8f",
+  buildings: "#b8934a",
+  landmark: "#8a8478",
 };
 
 // Legend rows, in display order -- "node" must exactly match the mesh node
@@ -1303,13 +1313,13 @@ function buildHotspots() {
     els.set(lm.id, { el, worldPos });
   }
 
-  const order = ["hospital", "government", "mercer", "landmark"];
+  const order = ["medical", "government", "mercer", "heritage", "music", "church", "buildings", "landmark"];
   for (const cat of order) {
     const items = grouped[cat] || [];
     if (!items.length) continue;
     const details = document.createElement("details");
     details.className = "landmark-group";
-    details.open = cat === "hospital";
+    details.open = cat === "medical";
     const summary = document.createElement("summary");
     summary.textContent = `${CATEGORY_LABEL[cat]} (${items.length})`;
     details.appendChild(summary);
@@ -1324,11 +1334,12 @@ function buildHotspots() {
     landmarkGroupsEl.appendChild(details);
   }
 
+  const countIdToCategory = { hospital: "medical", government: "government", mercer: "mercer", landmark: "landmark" };
   for (const cat of ["building_default", "hospital", "government", "mercer", "landmark"]) {
     const el = document.getElementById("count-" + cat);
     if (!el) continue;
     if (cat === "building_default") { el.textContent = ""; continue; }
-    el.textContent = (grouped[cat] || []).length;
+    el.textContent = (grouped[countIdToCategory[cat]] || []).length;
   }
 
   return els;

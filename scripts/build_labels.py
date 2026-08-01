@@ -25,6 +25,7 @@ Run from the project root, after fetch_places.py:
 """
 import json
 
+import geopandas as gpd
 from shapely.geometry import Point, MultiLineString
 from shapely.ops import unary_union, linemerge
 
@@ -51,6 +52,18 @@ HIGHWAY_MIN_SEGMENT_M = 800.0
 HIGHWAY_MAX_LABELS_PER_PART = 6  # divided highways (separate carriageways per direction
                                   # in OSM) roughly double the naive count -- cap per merged
                                   # part rather than fine-tuning spacing further
+
+# Named water bodies, same linemerge-and-space-out treatment as highways for
+# rivers (5 raw "Ocmulgee River" segments merge into far fewer real
+# contiguous lines), one label at the centroid for lakes/ponds above
+# WATER_AREA_MIN_M2 -- of 79 named water features in the raw OSM data, most
+# of the ones below this are small private ponds (e.g. "Kraftsman
+# Association Lake", "Gibson-Cary Development Corporation Pond") not real
+# geographic landmarks worth labeling.
+WATER_AREA_MIN_M2 = 50000.0
+WATER_LABEL_SPACING_M = 5000.0
+WATER_MIN_LINE_M = 800.0
+WATER_MAX_LABELS_PER_PART = 4
 
 # OSM node placement for a "place" point isn't always dead-center of the
 # named area, and industrial way centers can sit right at a facility's edge
@@ -118,6 +131,50 @@ def build_highway_labels():
     return labels
 
 
+def build_water_labels():
+    gdf = gpd.read_file("data/water_raw.geojson").to_crs(bg.UTM_CRS)
+    gdf = gdf[gdf["name"].notna() & (gdf["name"] != "")]
+    labels = []
+    i = 0
+
+    lines = gdf[gdf["kind"] == "line"]
+    for name, group in lines.groupby("name"):
+        union = unary_union(group.geometry.tolist())
+        merged = linemerge(union) if isinstance(union, MultiLineString) else union
+        parts = merged.geoms if isinstance(merged, MultiLineString) else [merged]
+        for part in parts:
+            if part.is_empty or part.length < WATER_MIN_LINE_M:
+                continue
+            n_pts = min(WATER_MAX_LABELS_PER_PART, max(1, int(part.length // WATER_LABEL_SPACING_M) + 1))
+            for k in range(n_pts):
+                frac = (k + 0.5) / n_pts
+                pt = part.interpolate(frac, normalized=True)
+                if not COUNTY_SHAPE_LOOSE.contains(pt):
+                    continue
+                _, _, x_mm, y_mm, z_mm = to_model_xyz_utm(pt.x, pt.y)
+                labels.append({"id": f"wtr-{i}", "name": name, "tier": "water",
+                               "x": round(x_mm, 1), "y": round(y_mm, 1), "z": round(z_mm, 2)})
+                i += 1
+
+    # lakes/ponds: a name can span multiple disjoint polygon parts (e.g. an
+    # inlet mapped separately) -- union by name first so area/centroid
+    # reflect the whole named feature, not just one fragment of it.
+    areas = gdf[gdf["kind"] == "area"]
+    for name, group in areas.groupby("name"):
+        union = unary_union(group.geometry.tolist())
+        if union.area < WATER_AREA_MIN_M2:
+            continue
+        pt = union.centroid
+        if not COUNTY_SHAPE_LOOSE.contains(pt):
+            continue
+        _, _, x_mm, y_mm, z_mm = to_model_xyz_utm(pt.x, pt.y)
+        labels.append({"id": f"wtr-{i}", "name": name, "tier": "water",
+                       "x": round(x_mm, 1), "y": round(y_mm, 1), "z": round(z_mm, 2)})
+        i += 1
+
+    return labels
+
+
 def build():
     elements = load_places()
     labels = []
@@ -141,7 +198,7 @@ def build():
             tier = TIER_BY_PLACE_TAG.get(place_tag)
             if tier is None:
                 continue
-        elif tags.get("landuse") in ("industrial", "commercial"):
+        elif tags.get("landuse") in ("industrial", "commercial") and tags.get("pipeline") != "substation":
             tier = "industrial"
         else:
             continue
@@ -165,6 +222,10 @@ def build():
     hwy_labels = build_highway_labels()
     print(f"{len(hwy_labels)} highway labels built")
     labels += hwy_labels
+
+    water_labels = build_water_labels()
+    print(f"{len(water_labels)} water labels built")
+    labels += water_labels
 
     by_tier = {}
     for lb in labels:
