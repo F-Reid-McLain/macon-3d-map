@@ -163,6 +163,72 @@
     margin: 0;
   }
 
+  /* search inputs (settings search, map/POI search) -- same dark-paper/
+     brass palette and sharp corners as every other panel control, not a
+     generic rounded browser search box. */
+  .panel-search {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0.5rem 0 0.6rem;
+    padding: 0.4rem 0.6rem;
+    font: inherit;
+    font-size: 0.8rem;
+    color: var(--paper);
+    background: rgba(236,230,217,0.06);
+    border: 1px solid var(--paper-dim);
+    border-radius: 3px;
+    outline: none;
+  }
+  .panel-search::placeholder { color: var(--paper-dim); opacity: 0.7; }
+  .panel-search:focus { border-color: var(--brass-bright); background: rgba(236,230,217,0.1); }
+  .panel-search::-webkit-search-cancel-button { filter: invert(0.6); cursor: pointer; }
+
+  /* live results dropdown for the map/POI search -- hidden (display:none)
+     until there's an actual query, so it doesn't sit there as dead empty
+     space the rest of the time. */
+  #map-search-results {
+    display: none;
+    flex-direction: column;
+    margin: -0.4rem 0 0.6rem;
+    border: 1px solid var(--paper-dim);
+    border-top: none;
+    max-height: 260px;
+    overflow-y: auto;
+    background: rgba(18,24,26,0.6);
+  }
+  #map-search-results.visible { display: flex; }
+  .map-search-result {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid rgba(236,230,217,0.08);
+    color: var(--paper);
+    font: inherit;
+    font-size: 0.78rem;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .map-search-result:last-child { border-bottom: none; }
+  .map-search-result:hover, .map-search-result:focus-visible { background: rgba(212,172,94,0.14); }
+  .map-search-result .tag {
+    flex: none;
+    font-size: 0.68rem;
+    color: var(--paper-dim);
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .map-search-no-results {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.78rem;
+    color: var(--paper-dim);
+    font-style: italic;
+  }
+
   .legend-row {
     display: flex;
     align-items: center;
@@ -574,7 +640,16 @@
     white-space: nowrap;
     font-weight: 600;
     letter-spacing: 0.02em;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.25s ease, transform 0.3s ease, color 0.3s ease, text-shadow 0.3s ease;
+  }
+  /* briefly highlighted after flying to it from a map search result --
+     same "grow + brass glow" idea as a hotspot's .pulsing dot, just applied
+     to plain text since place labels have no dot/chrome of their own. */
+  .place-label.pulsing {
+    transform: translate(-50%, -50%) scale(1.35);
+    color: var(--brass-bright) !important;
+    text-shadow: 0 0 10px rgba(212,172,94,0.9), 0 1px 3px rgba(18,24,26,0.9);
+    z-index: 5;
   }
   .place-label.tier-neighbourhood { font-size: 0.68rem; color: var(--paper-dim); }
   .place-label.tier-industrial { font-size: 0.72rem; color: var(--brass-bright); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -856,7 +931,13 @@
     <div id="panel-scroll">
       <h2>Legend</h2>
       <p class="desc" style="margin-bottom:0.5rem">Click any row to show/hide that layer.</p>
+      <input type="search" id="legend-search" class="panel-search" placeholder="Search settings…" aria-label="Search settings" autocomplete="off">
       <div id="legend-rows"></div>
+
+      <h2>Search the map</h2>
+      <p class="desc" style="margin-bottom:0.5rem">Find a neighborhood, road, river, or landmark by name and fly straight to it.</p>
+      <input type="search" id="map-search" class="panel-search" placeholder="Search POIs, roads, neighborhoods…" aria-label="Search the map" autocomplete="off">
+      <div id="map-search-results"></div>
 
       <h2>Landmark index</h2>
       <p class="desc" style="margin-bottom:0.5rem">Click any building to fly the camera to it. Real elevation data — <a href="#" id="reset-view-link" class="mono" style="color:var(--brass-bright)">reset view</a>.</p>
@@ -1010,6 +1091,17 @@ const PLACE_LABEL_TIERS = {
   industrial: { fadeStart: 2200, fadeEnd: 1500 },
   neighbourhood: { fadeStart: 1100, fadeEnd: 500 },
   hamlet: { fadeStart: 550, fadeEnd: 250 },
+};
+
+// Display tag shown next to each place-label result in the map search
+// dropdown (see buildMapSearch()) -- same tiers as PLACE_LABEL_TIERS, just
+// human-readable instead of the raw internal tier key.
+const PLACE_TIER_LABEL = {
+  highway: "highway",
+  water: "water",
+  industrial: "industrial area",
+  neighbourhood: "neighborhood",
+  hamlet: "community",
 };
 
 const CATEGORY_LABEL = {
@@ -1378,6 +1470,8 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
   hotspotEls = buildHotspots();
   placeLabelEls = buildPlaceLabels();
   buildLegend(categoryMeshes);
+  wireLegendSearch();
+  buildMapSearch();
   frameDefaultView();
   loadingEl.classList.add("hidden");
   requestAnimationFrame(animate);
@@ -1683,6 +1777,144 @@ function buildLegend(categoryMeshes) {
   rowsEl.appendChild(desc);
 }
 
+// ---- settings search: a plain live filter over the legend built above,
+// not a separate index -- reads the already-built DOM (row labels, section
+// headings) rather than re-deriving anything from LEGEND_SECTIONS, so it
+// can't drift out of sync with what buildLegend() actually rendered. ----
+function wireLegendSearch() {
+  const input = document.getElementById("legend-search");
+  const sections = [...document.querySelectorAll("#legend-rows .legend-section")].map((sectionEl) => ({
+    sectionEl,
+    headingText: (sectionEl.querySelector(".legend-section-master .desc")?.textContent || "").toLowerCase(),
+  }));
+  // "Place labels" is the one row that isn't inside any section (a direct
+  // child of #legend-rows) -- handled separately from the section loop below.
+  const looseRows = [...document.querySelectorAll("#legend-rows > .legend-row")];
+
+  function rowLabel(row) {
+    return (row.querySelector(".legend-label")?.textContent || "").toLowerCase();
+  }
+
+  // Snapshot of each section's collapsed/expanded state, captured right as
+  // a search *starts* (the empty -> non-empty transition below), not once
+  // at page load -- searching force-expands sections to surface matches, so
+  // clearing the search has to restore whatever the user had actually left
+  // each section as, including anything they'd manually expanded/collapsed
+  // themselves before typing anything, not silently reset it to the
+  // original collapsedByDefault state from LEGEND_SECTIONS.
+  let collapsedSnapshot = null;
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) {
+      if (collapsedSnapshot) {
+        for (const { sectionEl } of sections) {
+          sectionEl.style.display = "";
+          sectionEl.classList.toggle("collapsed", collapsedSnapshot.get(sectionEl));
+          for (const row of sectionEl.querySelectorAll(".legend-row")) row.style.display = "";
+        }
+        for (const row of looseRows) row.style.display = "";
+        collapsedSnapshot = null;
+      }
+      return;
+    }
+    if (!collapsedSnapshot) {
+      collapsedSnapshot = new Map(sections.map(({ sectionEl }) => [sectionEl, sectionEl.classList.contains("collapsed")]));
+    }
+    for (const { sectionEl, headingText } of sections) {
+      // a heading match (e.g. "redlining") shows every row in that section,
+      // not just rows whose own label happens to contain the query too.
+      const headingMatches = headingText.includes(q);
+      let anyVisible = false;
+      for (const row of sectionEl.querySelectorAll(".legend-row")) {
+        const visible = headingMatches || rowLabel(row).includes(q);
+        row.style.display = visible ? "" : "none";
+        anyVisible = anyVisible || visible;
+      }
+      sectionEl.style.display = anyVisible ? "" : "none";
+      if (anyVisible) sectionEl.classList.remove("collapsed"); // surface matches inside collapsed overlay sections
+    }
+    for (const row of looseRows) {
+      row.style.display = rowLabel(row).includes(q) ? "" : "none";
+    }
+  });
+}
+
+// ---- map/POI search: LANDMARKS + LABELS combined into one flat searchable
+// index (built once, not on every keystroke), since both are just "a named
+// thing with an x/y/z" from the search's point of view even though they're
+// rendered completely differently (hotspots vs. floating fading text). ----
+const MAP_SEARCH_INDEX = [
+  ...LANDMARKS.map((lm) => ({ kind: "landmark", ref: lm, name: lm.name, tag: CATEGORY_LABEL[lm.category] || lm.category })),
+  ...LABELS.map((lb) => ({ kind: "label", ref: lb, name: lb.name, tag: PLACE_TIER_LABEL[lb.tier] || lb.tier })),
+];
+const MAP_SEARCH_MAX_RESULTS = 20;
+
+function buildMapSearch() {
+  const input = document.getElementById("map-search");
+  const resultsEl = document.getElementById("map-search-results");
+
+  function render(query) {
+    const q = query.trim().toLowerCase();
+    resultsEl.innerHTML = "";
+    if (!q) {
+      resultsEl.classList.remove("visible");
+      return;
+    }
+    // "starts with" ranked above "contains elsewhere" -- searching "mercer"
+    // should put Mercer-prefixed results first, not wherever they happen to
+    // fall in LANDMARKS/LABELS' build order.
+    const starts = [], contains = [];
+    for (const item of MAP_SEARCH_INDEX) {
+      const nameLower = item.name.toLowerCase();
+      if (nameLower.startsWith(q)) starts.push(item);
+      else if (nameLower.includes(q)) contains.push(item);
+    }
+    const matches = starts.concat(contains).slice(0, MAP_SEARCH_MAX_RESULTS);
+    resultsEl.classList.add("visible");
+    if (matches.length === 0) {
+      const el = document.createElement("div");
+      el.className = "map-search-no-results";
+      el.textContent = "No matches";
+      resultsEl.appendChild(el);
+      return;
+    }
+    for (const item of matches) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "map-search-result";
+      btn.innerHTML = `<span>${item.name}</span><span class="tag">${item.tag}</span>`;
+      btn.addEventListener("click", () => selectResult(item));
+      resultsEl.appendChild(btn);
+    }
+  }
+
+  function selectResult(item) {
+    if (item.kind === "landmark") focusOn(item.ref);
+    else flyToLabel(item.ref);
+    input.value = item.name;
+    resultsEl.classList.remove("visible");
+    input.blur();
+  }
+
+  input.addEventListener("input", () => render(input.value));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      resultsEl.querySelector(".map-search-result")?.click(); // first (best-ranked) match
+    } else if (e.key === "Escape") {
+      input.value = "";
+      resultsEl.classList.remove("visible");
+      input.blur();
+    }
+  });
+  input.addEventListener("focus", () => { if (input.value.trim()) render(input.value); });
+  // blur fires before a result button's click when clicking from the input
+  // straight into the dropdown -- a short delay lets that click land before
+  // the dropdown disappears, instead of the two events racing.
+  input.addEventListener("blur", () => setTimeout(() => resultsEl.classList.remove("visible"), 150));
+}
+
 function updateHotspotScreenPositions() {
   if (!hotspotEls) return;
   const halfW = window.innerWidth / 2, halfH = window.innerHeight / 2;
@@ -1707,6 +1939,7 @@ function buildPlaceLabels() {
   const els = [];
   for (const lb of LABELS) {
     const el = document.createElement("div");
+    el.id = "lbl-" + lb.id; // targeted by flyToLabel() for the post-search-select pulse
     el.className = "place-label tier-" + lb.tier;
     el.textContent = lb.name;
     container.appendChild(el);
@@ -1753,7 +1986,18 @@ function updatePlaceLabelPositions() {
 let yaw = 0, pitch = -0.5;
 const PITCH_LIMIT = 89 * Math.PI / 180;
 const keys = new Set();
-window.addEventListener("keydown", (e) => { keys.add(e.code); });
+// Typing "wasd"/"qe" into either search box would otherwise ALSO register as
+// movement/altitude keys (this listener is on window, so it sees every
+// keystroke regardless of what has focus) -- ignore keyDOWN events that
+// originated from a text input/textarea. keyUP is deliberately NOT guarded
+// the same way: if a movement key is released after focus has already moved
+// to the search box (e.g. still holding "W" while clicking into it), it
+// must still clear from `keys` or that key gets stuck "held" forever --
+// removing a key that was never added is a harmless no-op either way.
+function isTypingTarget(el) {
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+}
+window.addEventListener("keydown", (e) => { if (!isTypingTarget(e.target)) keys.add(e.code); });
 window.addEventListener("keyup", (e) => { keys.delete(e.code); });
 
 // Look-drag is scoped to ONE specific pointerId (not a plain boolean) so it
@@ -2026,6 +2270,25 @@ function focusOn(lm) {
   document.getElementById("hs-" + activeId)?.classList.add("pulsing");
   document.getElementById("idx-" + activeId)?.classList.add("active");
   setTimeout(() => document.getElementById("hs-" + activeId)?.classList.remove("pulsing"), 2200);
+}
+
+// Same fly-to as focusOn(), for a place label (neighborhood/hamlet/
+// industrial/highway/water) instead of a LANDMARKS hotspot -- used by the
+// map search below. Labels have no sidebar list entry to mark "active" (the
+// landmark index doesn't list all ~250 of them) and fade in/out by camera
+// distance rather than being a fixed clickable dot, so there's no
+// equivalent of activeId/"idx-" to manage -- just the tween plus a brief
+// pulse on the label's own text (see .place-label.pulsing) for the same
+// "there, that one" visual confirmation focusOn() gives landmarks.
+function flyToLabel(lb) {
+  const target = new THREE.Vector3(lb.x, lb.y, lb.z);
+  modelGroup.localToWorld(target);
+  startTweenTo(target, new THREE.Vector3(-55, 50, 80));
+  const el = document.getElementById("lbl-" + lb.id);
+  if (el) {
+    el.classList.add("pulsing");
+    setTimeout(() => el.classList.remove("pulsing"), 2200);
+  }
 }
 
 function frameDefaultView() {
