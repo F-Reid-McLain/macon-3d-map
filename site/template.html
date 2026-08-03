@@ -692,6 +692,65 @@
     box-shadow: 0 1px 4px rgba(18,24,26,0.6);
   }
 
+  /* ---------- idle mode: only active when embedded in an iframe (see the
+     inline script right after #intro-modal's markup, and idleMode in the
+     main module script) -- hides all the interactive chrome that would
+     otherwise fight a host page (WASD capturing keys meant for the page,
+     scroll-to-zoom capturing what's meant to be page scroll, the full
+     side panel popping open unprompted) until the visitor deliberately
+     clicks in. ---------- */
+  body.idle-mode #panel-toggle,
+  body.idle-mode #map-search-toggle,
+  body.idle-mode #panel,
+  body.idle-mode #touch-controls {
+    display: none;
+  }
+  #idle-gate {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #idle-gate.hidden { display: none; }
+  #idle-gate-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(18,24,26,0.72);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.8rem;
+    backdrop-filter: blur(2px);
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  }
+  #idle-gate:hover #idle-gate-pill,
+  #idle-gate:focus-visible #idle-gate-pill {
+    border-color: var(--brass-bright);
+    background: rgba(18,24,26,0.85);
+    transform: scale(1.03);
+  }
+  .idle-gate-title {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--paper-dim);
+  }
+  .idle-gate-cta {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--brass-bright);
+  }
+
   /* ---------- loading overlay ---------- */
   /* ---------- intro modal: shown once per page load, above everything
      (including the loading screen -- there's plenty to read while the
@@ -918,6 +977,22 @@
 
   <div id="viewer-container"></div>
 
+  <!-- Idle-mode click gate: only ever shown when embedded in an iframe (see
+       the inline script right after #intro-modal, and idleMode in the main
+       module script below). A slow ambient camera orbit plays behind this
+       instead of dropping an embedded visitor straight into WASD/scroll
+       controls that would fight the host page's own scrolling/keyboard
+       focus -- clicking anywhere on it hands off to full interactive mode
+       (see the idle-gate click handler) and, since this has to be a real
+       user gesture for the Fullscreen API to honor it, also requests
+       fullscreen at the same time. -->
+  <button id="idle-gate" type="button" class="hidden" aria-label="Click to explore the interactive map">
+    <span id="idle-gate-pill">
+      <span class="idle-gate-title">Bibb County, Georgia — 3D Relief Model</span>
+      <span class="idle-gate-cta">Click to explore</span>
+    </span>
+  </button>
+
   <div id="intro-modal">
     <div id="intro-card">
       <div class="mark">Bibb County, Georgia</div>
@@ -933,6 +1008,30 @@
       <button id="intro-dismiss" type="button">Explore the map</button>
     </div>
   </div>
+
+  <!-- Deliberately a plain synchronous (non-module) script, not folded into
+       the main module script far below -- that one is `type="module"`,
+       which defers execution until the whole (multi-MB, base64-laden)
+       document has finished parsing. Without this, an embedded iframe
+       visitor would see the full intro modal flash on screen for however
+       long that parse takes before the module script finally catches up
+       and hides it for idle mode. This runs the instant the parser reaches
+       this point, right after both elements it touches already exist. Kept
+       in exact sync with the main script's own idleMode check below --
+       same expression, same fallback, just evaluated twice (this early
+       DOM-hiding pass, and the module script's own control-flow use of it)
+       since there's no cheap way to share state across the two script
+       types here. -->
+  <script>
+    (function () {
+      var embedded;
+      try { embedded = window.top !== window.self; } catch (e) { embedded = true; }
+      if (embedded) {
+        document.getElementById("intro-modal").classList.add("hidden");
+        document.body.classList.add("idle-mode");
+      }
+    })();
+  </script>
 
   <div id="info-modal" class="hidden">
     <div id="info-card">
@@ -1099,6 +1198,14 @@ import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from "three-
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
+// Same check, same fallback, as the small inline script right after
+// #intro-modal's markup (which already hid it + added body.idle-mode
+// before this deferred module script even started running) -- this copy
+// is what the rest of THIS script actually branches on (the animate() loop,
+// the idle-gate click handler), not a DOM read of that script's own state.
+let idleMode = false;
+try { idleMode = window.top !== window.self; } catch (e) { idleMode = true; }
 
 const LANDMARKS = __LANDMARKS_JSON__;
 const LABELS = __LABELS_JSON__;
@@ -1511,6 +1618,12 @@ gltfLoader.parse(modelBuffer, "", (gltf) => {
   buildMapSearch();
   frameDefaultView();
   loadingEl.classList.add("hidden");
+  // idleMode's own animate() branch overrides camera position/orientation
+  // on the very next frame regardless, so the frameDefaultView() call above
+  // is harmless but pointless here -- left in rather than special-cased,
+  // since a duration:0 snap the idle orbit immediately overrides next frame
+  // costs nothing to leave in and keeps this callback the same for both modes.
+  if (idleMode) document.getElementById("idle-gate").classList.remove("hidden");
   requestAnimationFrame(animate);
 }, (err) => {
   showError("GLTFLoader failed to parse the embedded model: " + (err?.message || err));
@@ -2334,6 +2447,35 @@ function frameDefaultView() {
   startTweenTo(target, new THREE.Vector3(300, 340, 430), 0); // duration 0: snap immediately on load
 }
 
+// ---- idle-mode ambient orbit (embedded/iframe context only -- see
+// idleMode). Deliberately NOT built on the tween system above: a tween is a
+// one-shot start->end animation that goes null when finished, but this
+// needs to keep animating indefinitely until the visitor clicks, so it just
+// computes an absolute camera position/orientation fresh every frame from
+// the current timestamp instead. Radius/height roughly match
+// frameDefaultView()'s own offset distance (sqrt(300^2+430^2) =~ 524,
+// height 340) so entering interactive mode afterward doesn't feel like a
+// jump in scale, just a stop in motion. ----
+const IDLE_ORBIT_RADIUS_MM = 520;
+const IDLE_ORBIT_HEIGHT_MM = 340;
+const IDLE_ORBIT_PERIOD_S = 75; // slow, ambient -- one full revolution every 75s
+function updateIdleOrbit(nowMs) {
+  const center = new THREE.Vector3(0, 0, 12);
+  modelGroup.localToWorld(center);
+  const angle = (nowMs / 1000 / IDLE_ORBIT_PERIOD_S) * Math.PI * 2;
+  camera.position.set(
+    center.x + Math.cos(angle) * IDLE_ORBIT_RADIUS_MM,
+    center.y + IDLE_ORBIT_HEIGHT_MM,
+    center.z + Math.sin(angle) * IDLE_ORBIT_RADIUS_MM,
+  );
+  const dummy = new THREE.Object3D();
+  dummy.isCamera = true; // see startTweenTo()'s note on lookAt()'s camera-specific branch
+  dummy.position.copy(camera.position);
+  dummy.up.set(0, 1, 0);
+  dummy.lookAt(center);
+  camera.quaternion.copy(dummy.quaternion);
+}
+
 document.getElementById("reset-view-link").addEventListener("click", (e) => {
   e.preventDefault();
   frameDefaultView();
@@ -2369,11 +2511,60 @@ mapSearchToggle.addEventListener("click", () => {
 // there instead, and swap the keyboard-shortcut hint for a touch-control one
 // (the on-screen joystick/buttons are visible either way and mostly
 // self-explanatory, but forward/back via pinch isn't obvious at a glance).
-if (window.matchMedia("(pointer: coarse)").matches) {
-  setPanelCollapsed(true);
-  document.getElementById("controls-hint").textContent =
-    "Drag joystick to move (push to edge to run) — drag screen to look — ▲▼ altitude — pinch to zoom";
+// Pulled out into its own function, not just an inline check, because
+// idle mode needs to apply this same touch-vs-desktop default *after* the
+// idle gate is dismissed too -- idle mode hides the panel/toggle buttons
+// via the separate body.idle-mode CSS class (display:none), entirely
+// bypassing the .collapsed class/transform this drives, so this never ran
+// for an embedded visitor until they actually click through.
+function applyInitialPanelVisibility() {
+  if (window.matchMedia("(pointer: coarse)").matches) {
+    setPanelCollapsed(true);
+    document.getElementById("controls-hint").textContent =
+      "Drag joystick to move (push to edge to run) — drag screen to look — ▲▼ altitude — pinch to zoom";
+  }
 }
+
+const idleGate = document.getElementById("idle-gate");
+idleGate.addEventListener("click", () => {
+  idleMode = false;
+  idleGate.classList.add("hidden");
+  document.body.classList.remove("idle-mode");
+  applyInitialPanelVisibility();
+  // frameDefaultView() still ran once at load time even in idle mode (it's
+  // called unconditionally right before the model's loading screen hides),
+  // queuing a duration:0 tween that idleMode's animate() branch takes
+  // priority over and so never actually processes -- left dangling,
+  // non-null, with its target still the original load-time default view.
+  // If not cleared here, the moment idleMode flips off the very next
+  // animate() frame would hit the `tween` branch instead of free-roam,
+  // see a stale duration<=0 tween, and snap the camera to that leftover
+  // target for one frame before finally going null -- a jarring jump right
+  // as the visitor enters, straight after the re-derivation below worked
+  // to make this transition feel seamless. Clearing it here prevents that
+  // regardless of what produced the stale tween, not just this specific cause.
+  tween = null;
+  // The idle orbit drives camera.position/quaternion directly every frame
+  // rather than through yaw/pitch (see updateIdleOrbit) -- re-derive them
+  // from wherever it left the camera so free-roam continues smoothly from
+  // there instead of snapping back to some other orientation (same
+  // re-derivation the tween-finished branch above already does).
+  const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+  yaw = euler.y;
+  pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, euler.x));
+  introModal.classList.remove("hidden"); // normal onboarding, now that they've chosen to enter
+  // Fullscreen must be requested from directly within a user gesture
+  // handler (this click) or browsers silently ignore it -- exactly the
+  // constraint this whole click-to-enter gate is built around. Requesting
+  // on #app (not just the canvas) so the legend panel/controls-hint go
+  // fullscreen too, not just the 3D view. Can still fail (unsupported
+  // browser, or the embedding <iframe> lacking allowfullscreen) -- caught
+  // and ignored rather than blocking entry into interactive mode either way.
+  const fsPromise = document.getElementById("app").requestFullscreen?.();
+  fsPromise?.catch(() => {});
+});
+
+applyInitialPanelVisibility();
 
 // ---- render loop ----
 let lastFrameTime = performance.now();
@@ -2382,7 +2573,9 @@ function animate(now) {
   const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
 
-  if (tween) {
+  if (idleMode) {
+    updateIdleOrbit(now);
+  } else if (tween) {
     const t = tween.duration <= 0 ? 1 : Math.min(1, (performance.now() - tween.startTime) / tween.duration);
     const e = easeInOutCubic(t);
     camera.position.lerpVectors(tween.startPos, tween.endPos, e);
