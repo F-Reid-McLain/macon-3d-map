@@ -141,6 +141,28 @@
   }
   #panel.collapsed ~ #panel-toggle,
   #panel-toggle.collapsed { right: env(safe-area-inset-right); }
+  /* Dedicated map-search shortcut, stacked directly under the Index toggle
+     -- same sliding right-edge behavior (JS keeps its .collapsed class in
+     sync with the panel's via setPanelCollapsed()), so it's reachable
+     without opening the full panel first: clicking it expands the panel
+     (if collapsed) and focuses the map search box directly, rather than
+     making the user hunt for the search field themselves. */
+  #map-search-toggle {
+    position: absolute;
+    top: calc(0.85rem + env(safe-area-inset-top) + 2.6rem);
+    right: calc(320px + env(safe-area-inset-right));
+    z-index: 31;
+    background: var(--ink-raised);
+    border: 1px solid var(--line);
+    border-right: none;
+    color: var(--paper);
+    padding: 0.5rem 0.6rem;
+    cursor: pointer;
+    border-radius: var(--radius) 0 0 var(--radius);
+    font-size: 0.85rem;
+    transition: right 0.25s ease;
+  }
+  #map-search-toggle.collapsed { right: env(safe-area-inset-right); }
 
   #panel-scroll {
     overflow-y: auto;
@@ -876,6 +898,7 @@
     #panel { width: 100vw; max-width: 100vw; }
     #panel-toggle { right: 100vw; }
     #panel.collapsed ~ #panel-toggle { right: 0; }
+    #map-search-toggle { right: 100vw; }
     /* the title + subtitle sit side-by-side (flex, baseline) by default,
        which is fine at desktop widths but wraps into an ugly two-line
        collision with the "Index" button on a phone -- stack them instead
@@ -927,6 +950,7 @@
   </div>
 
   <button id="panel-toggle" aria-label="Toggle legend panel" aria-expanded="true">☰ Index</button>
+  <button id="map-search-toggle" aria-label="Search the map">🔍 Search</button>
   <aside id="panel">
     <div id="panel-scroll">
       <h2>Legend</h2>
@@ -1258,6 +1282,19 @@ const loadingEl = document.getElementById("loading");
 const loadbar = document.getElementById("loadbar");
 const panel = document.getElementById("panel");
 const panelToggle = document.getElementById("panel-toggle");
+const mapSearchToggle = document.getElementById("map-search-toggle");
+
+// Three places need the panel's collapsed/expanded state kept in sync
+// (the panel itself, the Index toggle button, and this search shortcut
+// button right below it) -- one shared setter instead of three call sites
+// each remembering to update all three, which is exactly the kind of thing
+// that quietly drifts out of sync when a fourth is added later.
+function setPanelCollapsed(collapsed) {
+  panel.classList.toggle("collapsed", collapsed);
+  panelToggle.classList.toggle("collapsed", collapsed);
+  panelToggle.setAttribute("aria-expanded", String(!collapsed));
+  mapSearchToggle.classList.toggle("collapsed", collapsed);
+}
 
 // ---- intro modal: shown on every load (not gated on the model finishing --
 // there's plenty to read while it decodes), dismissed by the button. The
@@ -2309,9 +2346,21 @@ document.getElementById("reset-view-link").addEventListener("click", (e) => {
 });
 
 panelToggle.addEventListener("click", () => {
-  const collapsed = panel.classList.toggle("collapsed");
-  panelToggle.classList.toggle("collapsed", collapsed);
-  panelToggle.setAttribute("aria-expanded", String(!collapsed));
+  setPanelCollapsed(!panel.classList.contains("collapsed"));
+});
+
+// Dedicated map-search shortcut: expand the panel if it's currently
+// collapsed (same effect as clicking the Index toggle), then jump straight
+// to the search box regardless -- the point of a separate button right
+// under the Index toggle is not having to hunt through an opened panel for
+// the search field yourself. scrollIntoView() is a belt-and-suspenders
+// alongside focus()'s own scroll-into-view behavior, since that varies by
+// browser; harmless either way since it targets the same element.
+mapSearchToggle.addEventListener("click", () => {
+  if (panel.classList.contains("collapsed")) setPanelCollapsed(false);
+  const input = document.getElementById("map-search");
+  input.scrollIntoView({ behavior: "smooth", block: "center" });
+  input.focus();
 });
 
 // On a touch device the legend panel (100vw at this width, see the
@@ -2321,9 +2370,7 @@ panelToggle.addEventListener("click", () => {
 // (the on-screen joystick/buttons are visible either way and mostly
 // self-explanatory, but forward/back via pinch isn't obvious at a glance).
 if (window.matchMedia("(pointer: coarse)").matches) {
-  panel.classList.add("collapsed");
-  panelToggle.classList.add("collapsed");
-  panelToggle.setAttribute("aria-expanded", "false");
+  setPanelCollapsed(true);
   document.getElementById("controls-hint").textContent =
     "Drag joystick to move (push to edge to run) — drag screen to look — ▲▼ altitude — pinch to zoom";
 }
